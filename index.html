@@ -3,7 +3,6 @@
 <head>
   <meta charset="UTF-8">
   <title>Group Chat</title>
-  <!-- Socket.IO client -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
     body { margin: 0; font-family: Arial, sans-serif; }
@@ -14,11 +13,13 @@
     .msg.other { text-align: left; color: green; }
     .msg.system { text-align: center; color: gray; font-style: italic; }
     .input-area { display: flex; border-top: 1px solid #ddd; }
-    .input-area input { flex: 1; padding: 10px; border: none; outline: none; }
+    .input-area input { padding: 10px; border: none; outline: none; }
     .input-area button { padding: 10px 20px; border: none; background: #0078ff; color: #fff; cursor: pointer; }
+    #nameInput { border-bottom: 1px solid #ddd; padding: 10px; width: 100%; }
   </style>
 </head>
 <body>
+  <input id="nameInput" placeholder="Nhập tên của bạn..." />
   <div class="chat">
     <div class="messages" id="messages"></div>
     <div class="input-area">
@@ -28,14 +29,26 @@
   </div>
 
   <script>
-    // ⚠️ THAY LINK NÀY BẰNG LINK SERVER SOCKET.IO CỦA BẠN
-    // Ví dụ: playit.gg hoặc server.js bạn host
-    const socket = io("http://localhost:3000"); 
-
+    const socket = io("http://localhost:3000"); // Thay bằng link server của bạn
     const messagesDiv = document.getElementById("messages");
+    const nameInput = document.getElementById("nameInput");
+
+    // Lấy tên từ localStorage nếu có
+    let username = localStorage.getItem("chat_username") || "";
+    if (username) nameInput.value = username;
+
+    // Khi thay đổi tên
+    nameInput.addEventListener("change", () => {
+      username = nameInput.value.trim() || "Người dùng";
+      localStorage.setItem("chat_username", username); // lưu tên vào localStorage
+      socket.emit("change_name", username); // gửi tên mới lên server
+    });
 
     socket.on("connect", () => {
       console.log("✅ Kết nối thành công:", socket.id);
+      if (username) {
+        socket.emit("change_name", username);
+      }
     });
 
     socket.on("message", (data) => {
@@ -45,10 +58,11 @@
         div.textContent = data.message;
       } else if (data.from === socket.id) {
         div.className = "msg you";
-        div.textContent = `Bạn: ${data.message}`;
+        div.textContent = `Bạn (${username}): ${data.message}`;
       } else {
         div.className = "msg other";
-        div.textContent = `${data.from}: ${data.message}`;
+        const displayName = data.name || data.from;
+        div.textContent = `${displayName}: ${data.message}`;
       }
       messagesDiv.appendChild(div);
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
@@ -58,7 +72,7 @@
       const input = document.getElementById("msg");
       const msg = input.value.trim();
       if (!msg) return;
-      socket.emit("chat_message", msg);
+      socket.emit("chat_message", { message: msg, name: username });
       input.value = "";
     }
   </script>
