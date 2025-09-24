@@ -4,26 +4,34 @@
   <meta charset="UTF-8">
   <title>V-Cipher v6 WebRTC Chat</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #f4f4f9; padding: 20px; }
-    h2 { color: #333; }
-    #chat { border:1px solid #ccc; border-radius:5px; background:#fff; padding:10px; height:300px; overflow-y:auto; margin-bottom:10px; }
-    .msg { margin:5px 0; }
-    .me { color:blue; }
-    .friend { color:green; }
-    input, textarea { width:100%; padding:8px; margin:5px 0; border:1px solid #ccc; border-radius:5px; }
-    button { padding:8px 15px; margin-top:5px; background:#007bff; color:#fff; border:none; border-radius:5px; cursor:pointer; }
-    button:hover { background:#0056b3; }
+    body { font-family: Arial, sans-serif; background: #e5ddd5; padding: 0; margin: 0; display: flex; justify-content: center; height: 100vh; }
+    .container { width: 400px; display: flex; flex-direction: column; height: 100%; background: #fff; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
+    .header { background: #007bff; color: #fff; padding: 10px; text-align: center; }
+    #chat { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; }
+    .msg { margin: 5px 0; padding: 10px; border-radius: 15px; max-width: 70%; word-wrap: break-word; }
+    .me { background: #007bff; color: white; align-self: flex-end; border-bottom-right-radius: 0; }
+    .friend { background: #f1f0f0; color: black; align-self: flex-start; border-bottom-left-radius: 0; }
+    .footer { display: flex; flex-direction: column; padding: 10px; border-top: 1px solid #ddd; }
+    .footer input, .footer textarea { margin: 5px 0; padding: 8px; border-radius: 5px; border: 1px solid #ccc; }
+    .footer button { padding: 8px; border: none; border-radius: 5px; background: #007bff; color: white; cursor: pointer; }
+    .footer button:hover { background: #0056b3; }
   </style>
 </head>
 <body>
-  <h2>🔐 V-Cipher v6 WebRTC Chat</h2>
-  <div id="chat"></div>
-  <textarea id="msgInput" rows="3" placeholder="Type message..."></textarea>
-  <button onclick="sendMsg()">Send</button>
+  <div class="container">
+    <div class="header">🔐 V-Cipher v6 Chat</div>
+    <div id="chat"></div>
+    <div class="footer">
+      <input id="username" type="text" placeholder="Enter your name (default: Me)">
+      <textarea id="msgInput" rows="2" placeholder="Type message..."></textarea>
+      <button onclick="sendMsg()">Send</button>
+    </div>
+  </div>
 
   <script>
     const chatBox = document.getElementById("chat");
     const msgInput = document.getElementById("msgInput");
+    const usernameInput = document.getElementById("username");
 
     // Connect to signaling server
     const signalingServer = new WebSocket("ws://localhost:3000");
@@ -74,12 +82,15 @@
     };
 
     function sendMsg() {
-      const msg = msgInput.value;
-      if (msg && channel && channel.readyState === "open") {
-        channel.send(msg);
-        addMsg("Me", msg, "me");
-        msgInput.value = "";
-      }
+      const msg = msgInput.value.trim();
+      if (!msg || !channel || channel.readyState !== "open") return;
+
+      const username = usernameInput.value.trim() || "Me";
+      const fullMsg = username + ": " + msg;
+
+      channel.send(fullMsg);
+      addMsg(username, msg, "me");
+      msgInput.value = "";
     }
 
     function addMsg(user, text, cls) {
