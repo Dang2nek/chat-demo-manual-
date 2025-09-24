@@ -1,114 +1,94 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <title>Auto WebRTC Chat</title>
+  <meta charset="UTF-8">
+  <title>V-Cipher v6 WebRTC Chat</title>
   <style>
-    body { font-family: Arial; padding: 20px; }
-    textarea { width: 100%; height: 100px; margin-top: 10px; }
-    #chat { border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: auto; }
+    body { font-family: Arial, sans-serif; background: #f4f4f9; padding: 20px; }
+    h2 { color: #333; }
+    #chat { border:1px solid #ccc; border-radius:5px; background:#fff; padding:10px; height:300px; overflow-y:auto; margin-bottom:10px; }
+    .msg { margin:5px 0; }
+    .me { color:blue; }
+    .friend { color:green; }
+    input, textarea { width:100%; padding:8px; margin:5px 0; border:1px solid #ccc; border-radius:5px; }
+    button { padding:8px 15px; margin-top:5px; background:#007bff; color:#fff; border:none; border-radius:5px; cursor:pointer; }
+    button:hover { background:#0056b3; }
   </style>
 </head>
 <body>
-  <h2>WebRTC Chat (Auto ICE)</h2>
-
-  <button id="createOffer">Create Offer</button>
-  <button id="createAnswer">Create Answer</button>
-
-  <h3>Local Description</h3>
-  <textarea id="localSDP" readonly></textarea>
-
-  <h3>Remote Description</h3>
-  <textarea id="remoteSDP"></textarea>
-  <button id="setRemote">Set Remote</button>
-
-  <h3>Chat</h3>
+  <h2>🔐 V-Cipher v6 WebRTC Chat</h2>
   <div id="chat"></div>
-  <input type="text" id="msgBox" placeholder="Type message..." />
-  <button id="sendBtn">Send</button>
+  <textarea id="msgInput" rows="3" placeholder="Type message..."></textarea>
+  <button onclick="sendMsg()">Send</button>
 
   <script>
+    const chatBox = document.getElementById("chat");
+    const msgInput = document.getElementById("msgInput");
+
+    // Connect to signaling server
+    const signalingServer = new WebSocket("ws://localhost:3000");
+
     let pc = new RTCPeerConnection();
-    let channel;
+    let channel = pc.createDataChannel("chat");
 
-    const localSDP = document.getElementById("localSDP");
-    const remoteSDP = document.getElementById("remoteSDP");
-    const chat = document.getElementById("chat");
-
-    function log(msg) {
-      chat.innerHTML += msg + "<br>";
-      chat.scrollTop = chat.scrollHeight;
-    }
-
-    // Data channel cho peer A
-    document.getElementById("createOffer").onclick = async () => {
-      channel = pc.createDataChannel("chat");
-      setupChannel(channel);
-
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-
-      // Chờ ICE gather xong
-      await waitIceGathering();
-      localSDP.value = JSON.stringify(pc.localDescription);
+    channel.onmessage = (e) => {
+      addMsg("Friend", e.data, "friend");
     };
 
-    // Peer B tạo Answer
-    document.getElementById("createAnswer").onclick = async () => {
-      pc.ondatachannel = (e) => {
-        channel = e.channel;
-        setupChannel(channel);
-      };
-
-      const offer = JSON.parse(remoteSDP.value);
-      await pc.setRemoteDescription(offer);
-
-      const answer = await pc.createAnswer();
-      await pc.setLocalDescription(answer);
-
-      await waitIceGathering();
-      localSDP.value = JSON.stringify(pc.localDescription);
-    };
-
-    // Set remote description
-    document.getElementById("setRemote").onclick = async () => {
-      const desc = JSON.parse(remoteSDP.value);
-      await pc.setRemoteDescription(desc);
-      log("✅ Remote description set.");
-    };
-
-    // ICE gather auto
-    function waitIceGathering() {
-      return new Promise((resolve) => {
-        if (pc.iceGatheringState === "complete") {
-          resolve();
-        } else {
-          pc.onicegatheringstatechange = () => {
-            if (pc.iceGatheringState === "complete") {
-              resolve();
-            }
-          };
-        }
-      });
-    }
-
-    // Data channel setup
-    function setupChannel(ch) {
-      ch.onopen = () => log("📡 DataChannel opened");
-      ch.onmessage = (e) => log("👤 Peer: " + e.data);
-    }
-
-    // Send message
-    document.getElementById("sendBtn").onclick = () => {
-      const msg = document.getElementById("msgBox").value;
-      if (channel && channel.readyState === "open") {
-        channel.send(msg);
-        log("You: " + msg);
-        document.getElementById("msgBox").value = "";
-      } else {
-        log("⚠️ Channel not open");
+    pc.onicecandidate = ({candidate}) => {
+      if (candidate) {
+        signalingServer.send(JSON.stringify({type:"candidate", candidate}));
       }
     };
+
+    pc.ondatachannel = (event) => {
+      channel = event.channel;
+      channel.onmessage = (e) => {
+        addMsg("Friend", e.data, "friend");
+      };
+    };
+
+    signalingServer.onmessage = async (event) => {
+      const data = JSON.parse(event.data);
+
+      if (data.type === "offer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        signalingServer.send(JSON.stringify({type:"answer", answer}));
+      } else if (data.type === "answer") {
+        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
+      } else if (data.type === "candidate" && data.candidate) {
+        try {
+          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
+        } catch (e) {
+          console.error("Error adding candidate", e);
+        }
+      }
+    };
+
+    signalingServer.onopen = async () => {
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      signalingServer.send(JSON.stringify({type:"offer", offer}));
+    };
+
+    function sendMsg() {
+      const msg = msgInput.value;
+      if (msg && channel && channel.readyState === "open") {
+        channel.send(msg);
+        addMsg("Me", msg, "me");
+        msgInput.value = "";
+      }
+    }
+
+    function addMsg(user, text, cls) {
+      const div = document.createElement("div");
+      div.className = "msg " + cls;
+      div.textContent = user + ": " + text;
+      chatBox.appendChild(div);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    }
   </script>
 </body>
 </html>
