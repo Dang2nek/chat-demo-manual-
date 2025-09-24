@@ -1,301 +1,114 @@
-<!doctype html>
-<html lang="vi">
+<!DOCTYPE html>
+<html>
 <head>
-<meta charset="utf-8"/>
-<meta name="viewport" content="width=device-width,initial-scale=1"/>
-<title>V-Cipher v6 — P2P WebRTC (manual signaling)</title>
-<style>
-  body{font-family:Arial,Helvetica,sans-serif;background:#f5f7fb;padding:16px;color:#111}
-  .card{max-width:980px;margin:0 auto;background:#fff;padding:14px;border-radius:10px;border:1px solid #e6e9f0}
-  h2{margin:0 0 10px}
-  label{font-weight:600;font-size:0.95rem}
-  input,textarea,button,select{width:100%;padding:8px;margin:8px 0;border-radius:8px;border:1px solid #d7dbe8;box-sizing:border-box}
-  .row{display:flex;gap:10px}
-  .col{flex:1}
-  .chat{height:300px;overflow:auto;border-radius:8px;background:#fbfdff;padding:10px;border:1px solid #eef2fb}
-  .msg{margin:6px 0}
-  .meta{font-size:0.85rem;color:#59677a}
-  .btn{width:auto;padding:8px 12px;background:#2563eb;color:#fff;border:none;border-radius:8px;cursor:pointer}
-  .btn-ghost{background:#f1f5f9;color:#111;border:1px solid #dbe8ff}
-  small.note{color:#6b7280}
-  .flex-between{display:flex;justify-content:space-between;align-items:center;gap:12px}
-</style>
+  <meta charset="utf-8" />
+  <title>Auto WebRTC Chat</title>
+  <style>
+    body { font-family: Arial; padding: 20px; }
+    textarea { width: 100%; height: 100px; margin-top: 10px; }
+    #chat { border: 1px solid #ccc; padding: 10px; height: 200px; overflow-y: auto; }
+  </style>
 </head>
 <body>
-<div class="card">
-  <h2>V-Cipher v6 — P2P WebRTC (copy/paste signaling)</h2>
-  <div class="meta">Không cần server — tạo Offer/Answer thủ công bằng copy/paste. Sau khi datachannel mở, dùng HANDSHAKE (publicPass rotating 60s) để trao privatePass, sau đó chat mã hoá bằng privatePass.</div>
+  <h2>WebRTC Chat (Auto ICE)</h2>
 
-  <hr/>
-  <label>Your Peer ID (dùng để derive publicPass cho đối phương khi gửi handshake)</label>
-  <input id="myPeerId" value="peer-A"/>
+  <button id="createOffer">Create Offer</button>
+  <button id="createAnswer">Create Answer</button>
 
-  <div class="row">
-    <div class="col">
-      <label>Create Offer (click -> copy SDP)</label>
-      <button id="btnCreateOffer" class="btn">Create Offer</button>
-      <textarea id="localOffer" rows="5" placeholder="Offer sẽ xuất ở đây — copy gửi cho peer"></textarea>
-    </div>
-    <div class="col">
-      <label>Remote SDP (paste offer/answer ở đây)</label>
-      <textarea id="remoteSDP" rows="5" placeholder="Dán Offer (nếu bạn là B) hoặc Answer (nếu bạn là A)"></textarea>
-      <div class="row">
-        <div><button id="btnSetRemote" class="btn">Set Remote</button></div>
-        <div><button id="btnCreateAnswer" class="btn btn-ghost">Create Answer (if remote was Offer)</button></div>
-      </div>
-    </div>
-  </div>
+  <h3>Local Description</h3>
+  <textarea id="localSDP" readonly></textarea>
 
-  <hr/>
-  <div class="flex-between">
-    <div>
-      <label>Peer to send handshake/messages to (peerId đích)</label>
-      <input id="destPeerId" value="peer-B"/>
-    </div>
-    <div style="width:220px">
-      <label>Clock tolerance (windows)</label>
-      <select id="clockTol">
-        <option value="1">±1 window (safer)</option>
-        <option value="0">Exact</option>
-      </select>
-    </div>
-  </div>
+  <h3>Remote Description</h3>
+  <textarea id="remoteSDP"></textarea>
+  <button id="setRemote">Set Remote</button>
 
-  <div style="margin-top:10px" class="row">
-    <div class="col"><button id="btnHandshake" class="btn">Send HANDSHAKE (derive publicPass & create privatePass)</button></div>
-    <div class="col"><button id="btnSendMsg" class="btn">Send Message (use privatePass)</button></div>
-  </div>
+  <h3>Chat</h3>
+  <div id="chat"></div>
+  <input type="text" id="msgBox" placeholder="Type message..." />
+  <button id="sendBtn">Send</button>
 
-  <label>Message</label>
-  <textarea id="message" rows="3" placeholder="Gõ tin nhắn..."></textarea>
+  <script>
+    let pc = new RTCPeerConnection();
+    let channel;
 
-  <div style="margin-top:10px">
-    <div class="chat" id="chat"></div>
-  </div>
+    const localSDP = document.getElementById("localSDP");
+    const remoteSDP = document.getElementById("remoteSDP");
+    const chat = document.getElementById("chat");
 
-  <small class="note">Lưu ý: publicPass được derive từ peerId đích + window (60s). Cả 2 bên cần đồng bộ giờ tương đối. Nếu handshake thất bại, thử tăng tolerance lên ±1 window.</small>
-</div>
-
-<script>
-/* WebRTC P2P + V-Cipher handshake + AES-GCM encryption
-   Manual signaling: copy/paste Offer/Answer between peers
-*/
-
-// ---------- UI helpers ----------
-const chatEl = document.getElementById('chat');
-function log(msg, cls='') { const d=document.createElement('div'); d.className='msg '+cls; d.innerHTML=msg; chatEl.appendChild(d); chatEl.scrollTop=chatEl.scrollHeight; }
-function info(s){ log('<small class="meta">'+s+'</small>'); }
-
-// ---------- crypto helpers ----------
-function ab2base64(buf){ let binary=''; const bytes=new Uint8Array(buf); for(let i=0;i<bytes.byteLength;i++) binary += String.fromCharCode(bytes[i]); return btoa(binary); }
-function base642ab(base64){ const binary=atob(base64); const bytes=new Uint8Array(binary.length); for(let i=0;i<binary.length;i++) bytes[i]=binary.charCodeAt(i); return bytes.buffer; }
-function toBase64(str){ return btoa(unescape(encodeURIComponent(str))); }
-function fromBase64(str){ return decodeURIComponent(escape(atob(str))); }
-function str2ab(s){ return new TextEncoder().encode(s); }
-function ab2str(b){ return new TextDecoder().decode(b); }
-
-async function getKey(pass, salt){
-  const keyMaterial = await crypto.subtle.importKey('raw', new TextEncoder().encode(pass), {name:'PBKDF2'}, false, ['deriveKey']);
-  return crypto.subtle.deriveKey({name:'PBKDF2', salt, iterations:200000, hash:'SHA-256'}, keyMaterial, {name:'AES-GCM', length:256}, false, ['encrypt','decrypt']);
-}
-async function encryptWithPass(plainText, pass){
-  const salt = crypto.getRandomValues(new Uint8Array(16));
-  const iv = crypto.getRandomValues(new Uint8Array(12));
-  const key = await getKey(pass, salt);
-  const enc = await crypto.subtle.encrypt({name:'AES-GCM', iv}, key, str2ab(plainText));
-  const combined = new Uint8Array(salt.length + iv.length + enc.byteLength);
-  combined.set(salt,0); combined.set(iv, salt.length); combined.set(new Uint8Array(enc), salt.length + iv.length);
-  return ab2base64(combined.buffer);
-}
-async function decryptWithPass(cipherBase64, pass){
-  try{
-    const combined = new Uint8Array(base642ab(cipherBase64));
-    const salt = combined.slice(0,16);
-    const iv = combined.slice(16,28);
-    const data = combined.slice(28);
-    const key = await getKey(pass, salt);
-    const dec = await crypto.subtle.decrypt({name:'AES-GCM', iv}, key, data);
-    return ab2str(dec);
-  }catch(e){
-    return null;
-  }
-}
-
-// ---------- simple V-Cipher v2 ----------
-function v2enc(text, pass){ let r=''; for(let i=0;i<text.length;i++) r += String.fromCharCode(text.charCodeAt(i) + pass.length); return r; }
-function v2dec(text, pass){ let r=''; for(let i=0;i<text.length;i++) r += String.fromCharCode(text.charCodeAt(i) - pass.length); return r; }
-
-// ---------- rotating public pass derivation ----------
-async function sha256hex(msg){ const d = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(msg)); return Array.from(new Uint8Array(d)).map(b=>b.toString(16).padStart(2,'0')).join(''); }
-function nowWindow(){ return Math.floor(Date.now()/60000); } // 60s window
-async function derivePublicPassForWindow(peerId, window){ const txt = peerId + '|' + window; const h = await sha256hex(txt); return h.slice(0,32); }
-async function derivePublicCandidates(peerId, tol){ const w = nowWindow(); const arr = []; for(let i=-tol;i<=tol;i++){ arr.push(await derivePublicPassForWindow(peerId, w + i)); } return arr; }
-
-// ---------- app state ----------
-let pc = null;
-let dc = null;
-let currentPrivatePass = null;
-const localOfferEl = document.getElementById('localOffer');
-const remoteSDP = document.getElementById('remoteSDP');
-
-// ---------- WebRTC setup ----------
-function createPeerConnection(){
-  pc = new RTCPeerConnection();
-  pc.onicecandidate = e => {
-    if(e.candidate) return; // we only output final localDescription (SDP) for copy/paste
-  };
-  pc.ondatachannel = ev => {
-    dc = ev.channel;
-    setupDataChannel();
-  };
-  return pc;
-}
-
-function setupDataChannel(){
-  if(!dc) return;
-  dc.onopen = () => info('Data channel opened — you can send messages/handshake');
-  dc.onclose = () => info('Data channel closed');
-  dc.onmessage = async (ev) => {
-    // messages are JSON strings with {type:'HANDSHAKE'|'MSG', body: '<base64>'}
-    try{
-      const obj = JSON.parse(ev.data);
-      if(obj.type === 'HANDSHAKE'){
-        info('Received HANDSHAKE (encrypted). Trying to decrypt using publicPass candidates...');
-        // try derive candidates for my peerId (sender is destPeer? we don't know sender's peerId; we expect sender used destPeer=receiverPeerId)
-        // In this simple P2P demo, we assume the sender used the receiver's peerId as 'dest' when deriving publicPass.
-        // So we ask user to input their own peerId (myPeerId) — we derive public pass candidates for myPeerId.
-        const myPeerId = document.getElementById('myPeerId').value.trim();
-        const tol = parseInt(document.getElementById('clockTol').value || '1');
-        const candidates = await derivePublicCandidates(myPeerId, tol);
-        let ok = false;
-        for(const pub of candidates){
-          const dec = await decryptWithPass(obj.body, pub);
-          if(!dec) continue;
-          try{
-            const v2 = fromBase64(dec);
-            const payload = v2dec(v2, pub);
-            const parsed = JSON.parse(payload);
-            if(parsed && parsed.type === 'HANDSHAKE' && parsed.privatePass){
-              currentPrivatePass = parsed.privatePass;
-              log('<b>HANDSHAKE received</b><div class="meta">Stored privatePass (len '+currentPrivatePass.length+')</div>','recv');
-              // send back ACK encrypted with publicPass
-              const ack = JSON.stringify({type:'ACK', ts: Date.now()});
-              const ackV2 = v2enc(ack, pub);
-              const ackB64 = toBase64(ackV2);
-              const ackEnc = await encryptWithPass(ackB64, pub);
-              dc.send(JSON.stringify({ type:'ACK', body: ackEnc }));
-              info('Sent ACK (encrypted with publicPass)');
-              ok = true;
-              break;
-            }
-          }catch(e){}
-        }
-        if(!ok) info('Handshake decryption failed');
-        return;
-      } else if(obj.type === 'ACK'){
-        // attempt decrypt ACK with currentPrivatePass or with publicPass? ACK here could be publicPass-ACK
-        // We'll try both: first try decrypt with publicPass candidates for destPeer (if any), then try with privatePass
-        const myPeerId = document.getElementById('myPeerId').value.trim(); // not used for ACK decrypt normally
-        if(currentPrivatePass){
-          const tryDec = await decryptWithPass(obj.body, currentPrivatePass);
-          if(tryDec){
-            const v2 = fromBase64(tryDec);
-            const plain = v2dec(v2, currentPrivatePass);
-            log('<i>ACK (decrypted with privatePass):</i> '+escapeHtml(plain),'meta');
-            return;
-          }
-        }
-        // fallback: try publicPass candidates for other side? skip in this demo
-        info('Received ACK (could not decrypt with privatePass)');
-        return;
-      } else if(obj.type === 'MSG'){
-        // message encrypted with privatePass
-        if(!currentPrivatePass){ info('Received encrypted message but no privatePass yet'); return; }
-        const dec = await decryptWithPass(obj.body, currentPrivatePass);
-        if(!dec){ info('Unable to decrypt message with current privatePass'); return; }
-        const v2plain = fromBase64(dec);
-        const plain = v2dec(v2plain, currentPrivatePass);
-        log('<b>Peer:</b> '+escapeHtml(plain),'recv');
-        return;
-      } else {
-        // unknown format - may also be direct plain text for debug
-        log('Raw: '+escapeHtml(ev.data),'recv');
-      }
-    }catch(e){
-      log('Raw (not JSON): '+escapeHtml(ev.data),'recv');
+    function log(msg) {
+      chat.innerHTML += msg + "<br>";
+      chat.scrollTop = chat.scrollHeight;
     }
-  };
-}
 
-// ---------- signaling actions (manual) ----------
-document.getElementById('btnCreateOffer').addEventListener('click', async ()=>{
-  createPeerConnection();
-  // create data channel from caller side
-  dc = pc.createDataChannel('vcipher');
-  setupDataChannel();
-  const offer = await pc.createOffer();
-  await pc.setLocalDescription(offer);
-  // Wait for ICE to gather — we output localDescription (may be partial ICE) — user can still paste into remote
-  // We output the full SDP object
-  setTimeout(()=>{ localOfferEl.value = JSON.stringify(pc.localDescription); info('Copy the Offer and send to peer'); }, 500);
-});
+    // Data channel cho peer A
+    document.getElementById("createOffer").onclick = async () => {
+      channel = pc.createDataChannel("chat");
+      setupChannel(channel);
 
-document.getElementById('btnCreateAnswer').addEventListener('click', async ()=>{
-  // this button assumes remoteSDP contains an Offer
-  if(!remoteSDP.value.trim()){ alert('Paste remote Offer into Remote SDP first'); return; }
-  createPeerConnection();
-  // ondatachannel will set dc and setupDataChannel automatically
-  const offer = JSON.parse(remoteSDP.value.trim());
-  await pc.setRemoteDescription(offer);
-  const answer = await pc.createAnswer();
-  await pc.setLocalDescription(answer);
-  setTimeout(()=>{ localOfferEl.value = JSON.stringify(pc.localDescription); info('Answer created — copy Answer and send back to Offerer'); }, 500);
-});
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
 
-document.getElementById('btnSetRemote').addEventListener('click', async ()=>{
-  if(!remoteSDP.value.trim()){ alert('Paste remote SDP (Offer or Answer) into the box'); return; }
-  if(!pc) createPeerConnection(); // if not exist (caller after creating offer)
-  const obj = JSON.parse(remoteSDP.value.trim());
-  await pc.setRemoteDescription(obj);
-  info('Remote description set. Waiting for datachannel...');
-});
+      // Chờ ICE gather xong
+      await waitIceGathering();
+      localSDP.value = JSON.stringify(pc.localDescription);
+    };
 
-// ---------- handshake & messaging ----------
-document.getElementById('btnHandshake').addEventListener('click', async ()=>{
-  if(!dc || dc.readyState !== 'open'){ alert('Data channel not open'); return; }
-  const destPeer = document.getElementById('destPeerId').value.trim();
-  if(!destPeer){ alert('Nhập peerId đích'); return; }
-  // derive publicPass (use current window only, receiver will try tolerance)
-  const pub = (await derivePublicCandidates(destPeer, 0))[0];
-  const privatePass = generateRandom(32);
-  const payload = JSON.stringify({ type:'HANDSHAKE', privatePass, nonce: generateRandom(10), ts: Date.now() });
-  const v2 = v2enc(payload, pub); const b64 = toBase64(v2); const enc = await encryptWithPass(b64, pub);
-  // send as type HANDSHAKE
-  dc.send(JSON.stringify({ type:'HANDSHAKE', body: enc }));
-  currentPrivatePass = privatePass;
-  log('<b>Sent HANDSHAKE → '+escapeHtml(destPeer)+'</b><div class="meta">Stored own privatePass (len '+currentPrivatePass.length+')</div>','sent');
-});
+    // Peer B tạo Answer
+    document.getElementById("createAnswer").onclick = async () => {
+      pc.ondatachannel = (e) => {
+        channel = e.channel;
+        setupChannel(channel);
+      };
 
-document.getElementById('btnSendMsg').addEventListener('click', async ()=>{
-  if(!dc || dc.readyState !== 'open'){ alert('Data channel not open'); return; }
-  const txt = document.getElementById('message').value.trim();
-  if(!txt){ alert('Gõ tin nhắn'); return; }
-  if(!currentPrivatePass){ alert('Chưa có privatePass — gửi HANDSHAKE trước'); return; }
-  const v2 = v2enc(txt, currentPrivatePass); const b64 = toBase64(v2); const enc = await encryptWithPass(b64, currentPrivatePass);
-  dc.send(JSON.stringify({ type:'MSG', body: enc }));
-  log('<b>You:</b> '+escapeHtml(txt),'sent');
-  document.getElementById('message').value = '';
-});
+      const offer = JSON.parse(remoteSDP.value);
+      await pc.setRemoteDescription(offer);
 
-// ---------- small utilities ----------
-function generateRandom(len){
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_';
-  let s=''; for(let i=0;i<len;i++) s += chars[Math.floor(Math.random()*chars.length)]; return s;
-}
-function escapeHtml(s){ return s.replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;'); }
+      const answer = await pc.createAnswer();
+      await pc.setLocalDescription(answer);
 
-// ---------- end ----------
-info('Ready — nếu bạn là A: Create Offer -> gửi cho B. Nếu bạn là B: dán Offer -> Create Answer -> gửi Answer cho A. Sau khi both setRemote, datachannel mở sẽ hiển thị.'); 
-</script>
+      await waitIceGathering();
+      localSDP.value = JSON.stringify(pc.localDescription);
+    };
+
+    // Set remote description
+    document.getElementById("setRemote").onclick = async () => {
+      const desc = JSON.parse(remoteSDP.value);
+      await pc.setRemoteDescription(desc);
+      log("✅ Remote description set.");
+    };
+
+    // ICE gather auto
+    function waitIceGathering() {
+      return new Promise((resolve) => {
+        if (pc.iceGatheringState === "complete") {
+          resolve();
+        } else {
+          pc.onicegatheringstatechange = () => {
+            if (pc.iceGatheringState === "complete") {
+              resolve();
+            }
+          };
+        }
+      });
+    }
+
+    // Data channel setup
+    function setupChannel(ch) {
+      ch.onopen = () => log("📡 DataChannel opened");
+      ch.onmessage = (e) => log("👤 Peer: " + e.data);
+    }
+
+    // Send message
+    document.getElementById("sendBtn").onclick = () => {
+      const msg = document.getElementById("msgBox").value;
+      if (channel && channel.readyState === "open") {
+        channel.send(msg);
+        log("You: " + msg);
+        document.getElementById("msgBox").value = "";
+      } else {
+        log("⚠️ Channel not open");
+      }
+    };
+  </script>
 </body>
 </html>
