@@ -3,6 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Group Chat</title>
+  <!-- Socket.IO client -->
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
     body { margin: 0; font-family: Arial, sans-serif; }
@@ -27,28 +28,38 @@
   </div>
 
   <script>
-    // 🔹 Thay link này bằng link playit.gg hoặc server bạn host
-    const socket = io("https://within-ou.gl.at.ply.gg:15657");  
+    // ⚠️ THAY LINK NÀY BẰNG LINK SERVER SOCKET.IO CỦA BẠN
+    // Ví dụ: playit.gg hoặc server.js bạn host
+    const socket = io("http://localhost:3000"); 
+
     const messagesDiv = document.getElementById("messages");
 
     socket.on("connect", () => {
-      console.log("Kết nối:", socket.id);
+      console.log("✅ Kết nối thành công:", socket.id);
     });
 
     socket.on("message", (data) => {
       const div = document.createElement("div");
-      div.className = "msg " + 
-        (data.from === socket.id ? "you" : (data.from === "System" ? "system" : "other"));
-      div.textContent = data.from === "System" ? data.message : `${data.from}: ${data.message}`;
+      if (data.from === "System") {
+        div.className = "msg system";
+        div.textContent = data.message;
+      } else if (data.from === socket.id) {
+        div.className = "msg you";
+        div.textContent = `Bạn: ${data.message}`;
+      } else {
+        div.className = "msg other";
+        div.textContent = `${data.from}: ${data.message}`;
+      }
       messagesDiv.appendChild(div);
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
     });
 
     function sendMsg() {
-      const msg = document.getElementById("msg").value;
+      const input = document.getElementById("msg");
+      const msg = input.value.trim();
       if (!msg) return;
       socket.emit("chat_message", msg);
-      document.getElementById("msg").value = "";
+      input.value = "";
     }
   </script>
 </body>
