@@ -2,27 +2,43 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>V-Cipher v6 WebRTC Chat</title>
+  <title>V-Cipher v6 Messenger</title>
   <style>
-    body { font-family: Arial, sans-serif; background: #e5ddd5; padding: 0; margin: 0; display: flex; justify-content: center; height: 100vh; }
-    .container { width: 400px; display: flex; flex-direction: column; height: 100%; background: #fff; box-shadow: 0 0 10px rgba(0,0,0,0.2); }
-    .header { background: #007bff; color: #fff; padding: 10px; text-align: center; }
-    #chat { flex: 1; padding: 10px; overflow-y: auto; display: flex; flex-direction: column; }
-    .msg { margin: 5px 0; padding: 10px; border-radius: 15px; max-width: 70%; word-wrap: break-word; }
-    .me { background: #007bff; color: white; align-self: flex-end; border-bottom-right-radius: 0; }
-    .friend { background: #f1f0f0; color: black; align-self: flex-start; border-bottom-left-radius: 0; }
-    .footer { display: flex; flex-direction: column; padding: 10px; border-top: 1px solid #ddd; }
-    .footer input, .footer textarea { margin: 5px 0; padding: 8px; border-radius: 5px; border: 1px solid #ccc; }
-    .footer button { padding: 8px; border: none; border-radius: 5px; background: #007bff; color: white; cursor: pointer; }
+    body { margin: 0; font-family: Arial, sans-serif; height: 100vh; display: flex; }
+    .sidebar { width: 250px; background: #f5f5f5; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
+    .sidebar-header { padding: 15px; font-weight: bold; background: #007bff; color: white; }
+    .chat-list { flex: 1; overflow-y: auto; }
+    .chat-user { padding: 10px 15px; cursor: pointer; border-bottom: 1px solid #eee; }
+    .chat-user:hover { background: #eaeaea; }
+    .chat-user.active { background: #d0e7ff; }
+    .main { flex: 1; display: flex; flex-direction: column; }
+    .header { background: #007bff; color: #fff; padding: 15px; font-weight: bold; }
+    #chat { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; background: #e5ddd5; }
+    .msg { margin: 5px 0; padding: 10px 15px; border-radius: 20px; max-width: 60%; word-wrap: break-word; }
+    .me { background: #007bff; color: white; align-self: flex-end; border-bottom-right-radius: 5px; }
+    .other { background: #f1f0f0; color: black; align-self: flex-start; border-bottom-left-radius: 5px; }
+    .footer { display: flex; padding: 10px; border-top: 1px solid #ddd; background: #fff; }
+    .footer textarea { flex: 1; resize: none; padding: 10px; border-radius: 10px; border: 1px solid #ccc; }
+    .footer button { margin-left: 10px; padding: 0 20px; border: none; border-radius: 10px; background: #007bff; color: white; cursor: pointer; }
     .footer button:hover { background: #0056b3; }
   </style>
 </head>
 <body>
-  <div class="container">
-    <div class="header">🔐 V-Cipher v6 Chat</div>
+  <!-- Sidebar -->
+  <div class="sidebar">
+    <div class="sidebar-header">Chats</div>
+    <div class="chat-list" id="chatList">
+      <div class="chat-user active" onclick="selectUser('Alice')">Alice</div>
+      <div class="chat-user" onclick="selectUser('Bob')">Bob</div>
+      <div class="chat-user" onclick="selectUser('Charlie')">Charlie</div>
+    </div>
+  </div>
+
+  <!-- Main Chat -->
+  <div class="main">
+    <div class="header" id="chatHeader">Chat with Alice</div>
     <div id="chat"></div>
     <div class="footer">
-      <input id="username" type="text" placeholder="Enter your name (default: Me)">
       <textarea id="msgInput" rows="2" placeholder="Type message..."></textarea>
       <button onclick="sendMsg()">Send</button>
     </div>
@@ -31,74 +47,41 @@
   <script>
     const chatBox = document.getElementById("chat");
     const msgInput = document.getElementById("msgInput");
-    const usernameInput = document.getElementById("username");
+    const chatHeader = document.getElementById("chatHeader");
+    const chatList = document.getElementById("chatList");
 
-    // Connect to signaling server
-    const signalingServer = new WebSocket("ws://localhost:3000");
+    let currentUser = "Alice";
 
-    let pc = new RTCPeerConnection();
-    let channel = pc.createDataChannel("chat");
-
-    channel.onmessage = (e) => {
-      addMsg("Friend", e.data, "friend");
-    };
-
-    pc.onicecandidate = ({candidate}) => {
-      if (candidate) {
-        signalingServer.send(JSON.stringify({type:"candidate", candidate}));
+    // Fake WebRTC DataChannel for demo (chưa kết nối signaling)
+    let channel = {
+      send: (msg) => {
+        addMsg("me", msg);
+        // giả lập tin nhắn bên kia trả lời
+        setTimeout(() => addMsg("other", "Reply: " + msg), 1000);
       }
-    };
-
-    pc.ondatachannel = (event) => {
-      channel = event.channel;
-      channel.onmessage = (e) => {
-        addMsg("Friend", e.data, "friend");
-      };
-    };
-
-    signalingServer.onmessage = async (event) => {
-      const data = JSON.parse(event.data);
-
-      if (data.type === "offer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        signalingServer.send(JSON.stringify({type:"answer", answer}));
-      } else if (data.type === "answer") {
-        await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
-      } else if (data.type === "candidate" && data.candidate) {
-        try {
-          await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
-        } catch (e) {
-          console.error("Error adding candidate", e);
-        }
-      }
-    };
-
-    signalingServer.onopen = async () => {
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      signalingServer.send(JSON.stringify({type:"offer", offer}));
     };
 
     function sendMsg() {
       const msg = msgInput.value.trim();
-      if (!msg || !channel || channel.readyState !== "open") return;
-
-      const username = usernameInput.value.trim() || "Me";
-      const fullMsg = username + ": " + msg;
-
-      channel.send(fullMsg);
-      addMsg(username, msg, "me");
+      if (!msg) return;
+      channel.send(msg);
       msgInput.value = "";
     }
 
-    function addMsg(user, text, cls) {
+    function addMsg(who, text) {
       const div = document.createElement("div");
-      div.className = "msg " + cls;
-      div.textContent = user + ": " + text;
+      div.className = "msg " + who;
+      div.textContent = text;
       chatBox.appendChild(div);
       chatBox.scrollTop = chatBox.scrollHeight;
+    }
+
+    function selectUser(user) {
+      currentUser = user;
+      chatHeader.textContent = "Chat with " + user;
+      [...chatList.children].forEach(el => el.classList.remove("active"));
+      event.target.classList.add("active");
+      chatBox.innerHTML = ""; // clear chat khi đổi user
     }
   </script>
 </body>
