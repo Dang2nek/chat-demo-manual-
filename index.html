@@ -5,105 +5,122 @@
   <title>Messenger Clone</title>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
-    body { margin: 0; font-family: "Segoe UI", Tahoma, sans-serif; height: 100vh; display: flex; }
-    .sidebar { width: 220px; background: #f5f6f7; border-right: 1px solid #ddd; display: flex; flex-direction: column; }
-    .sidebar h2 { margin: 0; padding: 15px; font-size: 16px; border-bottom: 1px solid #ddd; background: #fff; }
-    .contacts { flex: 1; overflow-y: auto; }
-    .contact { padding: 12px 15px; cursor: pointer; border-bottom: 1px solid #eee; }
-    .contact:hover, .contact.active { background: #e7f3ff; }
-    .chat { flex: 1; display: flex; flex-direction: column; background: #f0f2f5; }
-    .chat-header { padding: 15px; background: #fff; border-bottom: 1px solid #ddd; font-weight: bold; }
-    .messages { flex: 1; padding: 15px; overflow-y: auto; display: flex; flex-direction: column; }
-    .msg { margin: 6px 0; max-width: 70%; padding: 10px 14px; border-radius: 18px; line-height: 1.4; font-size: 14px; }
-    .msg.you { align-self: flex-end; background: #0084ff; color: white; border-bottom-right-radius: 4px; }
-    .msg.other { align-self: flex-start; background: white; color: black; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.15); }
-    .input-area { display: flex; padding: 10px; background: white; border-top: 1px solid #ddd; }
-    .input-area input { flex: 1; padding: 10px 12px; border-radius: 20px; border: 1px solid #ccc; outline: none; font-size: 14px; }
-    .input-area button { margin-left: 10px; padding: 10px 16px; border: none; border-radius: 20px; background: #0084ff; color: white; font-size: 14px; cursor: pointer; }
-    .input-area button:hover { background: #006fe0; }
+    body { margin:0; font-family:Arial, sans-serif; }
+    .login, .chat { display:none; height:100vh; }
+    .login { display:flex; justify-content:center; align-items:center; flex-direction:column; }
+    .chat { display:flex; }
+    .sidebar { width:200px; background:#f0f0f0; padding:10px; border-right:1px solid #ccc; }
+    .messages { flex:1; display:flex; flex-direction:column; }
+    .msgs { flex:1; overflow-y:auto; padding:10px; background:#fff; }
+    .input { display:flex; border-top:1px solid #ccc; }
+    .input input { flex:1; padding:10px; border:none; outline:none; }
+    .input button { padding:10px; }
+    .msg.you { text-align:right; color:blue; }
+    .msg.other { text-align:left; color:green; }
   </style>
 </head>
 <body>
-  <div class="sidebar">
-    <h2>Liên hệ</h2>
-    <div class="contacts" id="contacts">
-      <div class="contact active" data-user="Alice">Alice</div>
-      <div class="contact" data-user="Bob">Bob</div>
-      <div class="contact" data-user="Charlie">Charlie</div>
-    </div>
+  <!-- Login/Register -->
+  <div class="login" id="loginPage">
+    <h2>Đăng nhập / Đăng ký</h2>
+    <input id="username" placeholder="Tên đăng nhập">
+    <input id="password" type="password" placeholder="Mật khẩu">
+    <button onclick="signup()">Đăng ký</button>
+    <button onclick="login()">Đăng nhập</button>
+    <div id="loginMsg"></div>
   </div>
 
-  <div class="chat">
-    <div class="chat-header" id="chatHeader">Alice</div>
-    <div class="messages" id="messages"></div>
-    <div class="input-area">
-      <input id="msg" placeholder="Nhập tin nhắn...">
-      <button onclick="sendMsg()">Gửi</button>
+  <!-- Chat -->
+  <div class="chat" id="chatPage">
+    <div class="sidebar">
+      <h3>Bạn bè</h3>
+      <div id="friends"></div>
+      <input id="newFriend" placeholder="Thêm bạn...">
+      <button onclick="addFriend()">Kết bạn</button>
+    </div>
+    <div class="messages">
+      <div class="msgs" id="msgs"></div>
+      <div class="input">
+        <input id="msgInput" placeholder="Nhập tin nhắn...">
+        <button onclick="sendMsg()">Gửi</button>
+      </div>
     </div>
   </div>
 
   <script>
     const socket = io();
+    let currentUser = null;
+    let currentChat = null;
 
-    let username = localStorage.getItem("chat_username") || prompt("Nhập tên của bạn:");
-    localStorage.setItem("chat_username", username);
-    socket.emit("register", username);
-
-    let currentChat = "Alice"; // mặc định chat Alice
-    const messagesDiv = document.getElementById("messages");
-    const chatHeader = document.getElementById("chatHeader");
-
-    function addMessage(data, type) {
-      const div = document.createElement("div");
-      div.className = "msg " + type;
-      div.textContent = data.message;
-      messagesDiv.appendChild(div);
-      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    function signup() {
+      socket.emit("signup", { username: username.value, password: password.value }, (res) => {
+        loginMsg.textContent = res.message;
+      });
     }
 
-    function loadChat(user) {
-      messagesDiv.innerHTML = "";
-      chatHeader.textContent = user;
-      currentChat = user;
-      socket.emit("join_chat", { from: username, to: user });
+    function login() {
+      socket.emit("login", { username: username.value, password: password.value }, (res) => {
+        if (res.success) {
+          currentUser = username.value;
+          document.getElementById("loginPage").style.display="none";
+          document.getElementById("chatPage").style.display="flex";
+          loadFriends(res.friends);
+        } else {
+          loginMsg.textContent = res.message;
+        }
+      });
+    }
+
+    function loadFriends(friends) {
+      const div = document.getElementById("friends");
+      div.innerHTML = "";
+      friends.forEach(f => {
+        const btn = document.createElement("button");
+        btn.textContent = f;
+        btn.onclick = () => openChat(f);
+        div.appendChild(btn);
+      });
+    }
+
+    function addFriend() {
+      const f = newFriend.value.trim();
+      if (!f) return;
+      socket.emit("add_friend", { friend: f }, (res) => {
+        alert(res.message);
+        if (res.success) loadFriends(res.friends);
+      });
+      newFriend.value = "";
+    }
+
+    function openChat(friend) {
+      currentChat = friend;
+      msgs.innerHTML = "";
+      socket.emit("get_history", { withUser: friend }, (history) => {
+        history.forEach(showMessage);
+      });
     }
 
     function sendMsg() {
-      const input = document.getElementById("msg");
-      const msg = input.value.trim();
-      if (!msg) return;
-
-      const msgObj = { from: username, to: currentChat, message: msg };
-      socket.emit("chat_message", msgObj);
-      addMessage(msgObj, "you");
-      input.value = "";
+      if (!currentChat) return alert("Chọn bạn để chat");
+      const text = msgInput.value.trim();
+      if (!text) return;
+      socket.emit("chat_message", { to: currentChat, message: text });
+      msgInput.value = "";
     }
 
-    socket.on("chat_history", (history) => {
-      messagesDiv.innerHTML = "";
-      history.forEach(msg => {
-        addMessage(msg, msg.from === username ? "you" : "other");
-      });
-    });
-
-    socket.on("message", (data) => {
-      if ((data.from === currentChat && data.to === username) ||
-          (data.to === currentChat && data.from === username)) {
-        addMessage(data, data.from === username ? "you" : "other");
+    socket.on("message", (msg) => {
+      if (msg.from === currentUser && msg.to === currentChat || msg.to === currentUser && msg.from === currentChat) {
+        showMessage(msg);
       }
     });
 
-    // Chuyển liên hệ
-    document.getElementById("contacts").addEventListener("click", (e) => {
-      if (e.target.classList.contains("contact")) {
-        document.querySelectorAll(".contact").forEach(c => c.classList.remove("active"));
-        e.target.classList.add("active");
-        loadChat(e.target.dataset.user);
-      }
-    });
-
-    // Load mặc định
-    loadChat(currentChat);
+    function showMessage(msg) {
+      const div = document.createElement("div");
+      div.className = "msg " + (msg.from === currentUser ? "you" : "other");
+      div.textContent = `${msg.from}: ${msg.message}`;
+      msgs.appendChild(div);
+      msgs.scrollTop = msgs.scrollHeight;
+    }
   </script>
 </body>
 </html>
