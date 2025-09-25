@@ -5,17 +5,105 @@
   <title>Group Chat</title>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
-    body { margin: 0; font-family: Arial, sans-serif; }
-    .chat { display: flex; flex-direction: column; height: 100vh; }
-    .messages { flex: 1; padding: 10px; overflow-y: auto; background: #f4f4f9; }
-    .msg { margin: 5px 0; }
-    .msg.you { text-align: right; color: blue; }
-    .msg.other { text-align: left; color: green; }
-    .msg.system { text-align: center; color: gray; font-style: italic; }
-    .input-area { display: flex; border-top: 1px solid #ddd; }
-    .input-area input { flex: 1; padding: 10px; border: none; outline: none; }
-    .input-area button { padding: 10px 20px; border: none; background: #0078ff; color: #fff; cursor: pointer; }
-    #nameInput { border-bottom: 1px solid #ddd; padding: 10px; width: 100%; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, sans-serif;
+      background: #e5ddd5;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+    }
+
+    /* Ô nhập tên */
+    #nameInput {
+      border: none;
+      outline: none;
+      padding: 12px;
+      font-size: 15px;
+      width: 100%;
+      box-sizing: border-box;
+      border-bottom: 1px solid #ccc;
+    }
+
+    .chat {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      height: calc(100vh - 50px);
+    }
+
+    .messages {
+      flex: 1;
+      padding: 15px;
+      overflow-y: auto;
+      background: #f0f2f5;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .msg {
+      margin: 5px 0;
+      max-width: 70%;
+      padding: 10px 14px;
+      border-radius: 18px;
+      line-height: 1.4;
+      font-size: 14px;
+      word-wrap: break-word;
+    }
+
+    .msg.you {
+      align-self: flex-end;
+      background: #0084ff;
+      color: white;
+      border-bottom-right-radius: 4px;
+    }
+
+    .msg.other {
+      align-self: flex-start;
+      background: white;
+      color: black;
+      border-bottom-left-radius: 4px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+
+    .msg.system {
+      align-self: center;
+      background: transparent;
+      color: gray;
+      font-style: italic;
+      font-size: 12px;
+    }
+
+    .input-area {
+      display: flex;
+      padding: 10px;
+      background: white;
+      border-top: 1px solid #ddd;
+    }
+
+    .input-area input {
+      flex: 1;
+      padding: 10px 12px;
+      border-radius: 20px;
+      border: 1px solid #ccc;
+      outline: none;
+      font-size: 14px;
+    }
+
+    .input-area button {
+      margin-left: 10px;
+      padding: 10px 16px;
+      border: none;
+      border-radius: 20px;
+      background: #0084ff;
+      color: white;
+      font-size: 14px;
+      cursor: pointer;
+    }
+
+    .input-area button:hover {
+      background: #006fe0;
+    }
   </style>
 </head>
 <body>
@@ -32,13 +120,11 @@
   </div>
 
   <script>
-    // 👉 Thay link này bằng link server socket.io của bạn (VD: wss://xxxx.playit.gg hoặc http://localhost:3000)
-    const socket = io("http://localhost:3000");
-
+    const socket = io("http://localhost:3000"); // 🔗 Thay bằng link server của bạn
     const messagesDiv = document.getElementById("messages");
     const nameInput = document.getElementById("nameInput");
 
-    // --- Quản lý tên người dùng ---
+    // --- Lưu tên người dùng ---
     let username = localStorage.getItem("chat_username") || "";
     if (username) nameInput.value = username;
 
@@ -50,9 +136,7 @@
 
     socket.on("connect", () => {
       console.log("✅ Kết nối:", socket.id);
-      if (username) {
-        socket.emit("change_name", username);
-      }
+      if (username) socket.emit("change_name", username);
     });
 
     // --- Nhận tin nhắn ---
@@ -64,10 +148,10 @@
         div.textContent = data.message;
       } else if (data.from === socket.id) {
         div.className = "msg you";
-        div.textContent = `Bạn (${data.name || username}): ${data.message}`;
+        div.textContent = data.message;
       } else {
         div.className = "msg other";
-        div.textContent = `${data.name || data.from}: ${data.message}`;
+        div.textContent = `${data.name || "Ẩn danh"}: ${data.message}`;
       }
 
       messagesDiv.appendChild(div);
