@@ -5,117 +5,144 @@
   <title>Chat App</title>
   <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
-    body { margin:0; font-family: Arial, sans-serif; display:flex; height:100vh; }
-    .sidebar { width: 220px; background:#f1f1f1; border-right:1px solid #ddd; padding:10px; }
-    .chatbox { flex:1; display:flex; flex-direction:column; }
-    .messages { flex:1; padding:10px; overflow-y:auto; background:#fafafa; }
-    .msg { margin:5px 0; }
-    .msg.you { text-align:right; color:blue; }
-    .msg.other { text-align:left; color:green; }
-    .input-area { display:flex; border-top:1px solid #ddd; }
-    .input-area input { flex:1; padding:10px; border:none; outline:none; }
-    .input-area button { padding:10px; border:none; background:#0078ff; color:#fff; cursor:pointer; }
-    .login, .register { margin:20px; }
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f4f9; }
+    .hidden { display: none; }
+
+    .login-box, .register-box {
+      max-width: 300px; margin: 100px auto; padding: 20px;
+      background: white; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .login-box h2, .register-box h2 { margin-bottom: 15px; }
+    input, button { width: 100%; padding: 10px; margin: 5px 0; }
+    button { background: #0078ff; border: none; color: white; cursor: pointer; }
+
+    .chat { display: flex; flex-direction: column; height: 100vh; }
+    .messages { flex: 1; padding: 10px; overflow-y: auto; background: #fff; }
+    .msg { margin: 5px 0; }
+    .msg.you { text-align: right; color: blue; }
+    .msg.other { text-align: left; color: green; }
+    .msg.system { text-align: center; color: gray; font-style: italic; }
+    .input-area { display: flex; border-top: 1px solid #ddd; }
+    .input-area input { flex: 1; padding: 10px; border: none; outline: none; }
+    .input-area button { padding: 10px 20px; border: none; background: #0078ff; color: #fff; cursor: pointer; }
   </style>
 </head>
 <body>
-  <div class="sidebar">
-    <h3>Người dùng</h3>
-    <ul id="users"></ul>
-    <hr>
-    <div class="register">
-      <h4>Đăng ký</h4>
-      <input id="regUser" placeholder="Tên"><br>
-      <input id="regPass" type="password" placeholder="Mật khẩu"><br>
-      <button onclick="register()">Đăng ký</button>
-      <p id="regMsg"></p>
-    </div>
-    <div class="login">
-      <h4>Đăng nhập</h4>
-      <input id="loginUser" placeholder="Tên"><br>
-      <input id="loginPass" type="password" placeholder="Mật khẩu"><br>
-      <button onclick="login()">Đăng nhập</button>
-      <p id="loginMsg"></p>
-    </div>
+
+  <!-- FORM LOGIN -->
+  <div id="loginBox" class="login-box">
+    <h2>Đăng nhập</h2>
+    <input id="loginUser" placeholder="Tên đăng nhập">
+    <input id="loginPass" type="password" placeholder="Mật khẩu">
+    <button onclick="login()">Đăng nhập</button>
+    <p>Chưa có tài khoản? <a href="#" onclick="showRegister()">Đăng ký</a></p>
+    <div id="loginMsg"></div>
   </div>
 
-  <div class="chatbox">
+  <!-- FORM REGISTER -->
+  <div id="registerBox" class="register-box hidden">
+    <h2>Đăng ký</h2>
+    <input id="regUser" placeholder="Tên đăng nhập">
+    <input id="regPass" type="password" placeholder="Mật khẩu">
+    <button onclick="register()">Đăng ký</button>
+    <p>Đã có tài khoản? <a href="#" onclick="showLogin()">Đăng nhập</a></p>
+    <div id="regMsg"></div>
+  </div>
+
+  <!-- CHAT -->
+  <div id="chatBox" class="chat hidden">
     <div class="messages" id="messages"></div>
     <div class="input-area">
-      <input id="msgInput" placeholder="Nhập tin nhắn..." disabled>
-      <button onclick="sendMsg()" disabled id="sendBtn">Gửi</button>
+      <input id="msg" placeholder="Nhập tin nhắn...">
+      <button onclick="sendMsg()">Gửi</button>
     </div>
   </div>
 
-  <script>
-    const socket = io("http://localhost:3000");
-    let currentUser = null;
-    let chattingWith = null;
+<script>
+  const API_BASE = ""; // để trống vì server và client chung domain
+  let socket = null;
+  let currentUser = null;
 
-    function register() {
-      const username = document.getElementById("regUser").value;
-      const password = document.getElementById("regPass").value;
-      socket.emit("register", { username, password });
+  // Hiện login/register
+  function showLogin() {
+    document.getElementById("loginBox").classList.remove("hidden");
+    document.getElementById("registerBox").classList.add("hidden");
+  }
+  function showRegister() {
+    document.getElementById("loginBox").classList.add("hidden");
+    document.getElementById("registerBox").classList.remove("hidden");
+  }
+
+  // Đăng ký
+  async function register() {
+    const username = document.getElementById("regUser").value.trim();
+    const password = document.getElementById("regPass").value.trim();
+    let res = await fetch(API_BASE + "/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    let data = await res.json();
+    document.getElementById("regMsg").innerText = data.message;
+    if (data.success) showLogin();
+  }
+
+  // Đăng nhập
+  async function login() {
+    const username = document.getElementById("loginUser").value.trim();
+    const password = document.getElementById("loginPass").value.trim();
+    let res = await fetch(API_BASE + "/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    let data = await res.json();
+    document.getElementById("loginMsg").innerText = data.message;
+    if (data.success) {
+      currentUser = username;
+      startChat();
     }
+  }
 
-    socket.on("register_response", (res) => {
-      document.getElementById("regMsg").textContent = res.message;
+  // Bắt đầu chat
+  function startChat() {
+    document.getElementById("loginBox").classList.add("hidden");
+    document.getElementById("registerBox").classList.add("hidden");
+    document.getElementById("chatBox").classList.remove("hidden");
+
+    socket = io();
+
+    const messagesDiv = document.getElementById("messages");
+
+    socket.on("message_history", (history) => {
+      history.forEach(msg => addMsg(msg));
     });
 
-    function login() {
-      const username = document.getElementById("loginUser").value;
-      const password = document.getElementById("loginPass").value;
-      socket.emit("login", { username, password });
-    }
-
-    socket.on("login_response", (res) => {
-      document.getElementById("loginMsg").textContent = res.message;
-      if (res.success) {
-        currentUser = res.username;
-        document.getElementById("msgInput").disabled = false;
-        document.getElementById("sendBtn").disabled = false;
-      }
+    socket.on("message", (data) => {
+      addMsg(data);
     });
 
-    socket.on("online_users", (list) => {
-      const ul = document.getElementById("users");
-      ul.innerHTML = "";
-      list.forEach(u => {
-        if (u === currentUser) return;
-        const li = document.createElement("li");
-        li.textContent = u;
-        li.style.cursor = "pointer";
-        li.onclick = () => { chattingWith = u; alert("Đang chat với " + u); };
-        ul.appendChild(li);
-      });
-    });
-
-    socket.on("load_messages", (msgs) => {
-      msgs.forEach(m => showMsg(m));
-    });
-
-    socket.on("chatMessage", (msg) => {
-      showMsg(msg);
-    });
-
-    function sendMsg() {
-      const text = document.getElementById("msgInput").value;
-      if (!text || !chattingWith) return alert("Chọn người để chat!");
-      socket.emit("chatMessage", { to: chattingWith, message: text });
-      document.getElementById("msgInput").value = "";
-    }
-
-    function showMsg(m) {
+    function addMsg(data) {
       const div = document.createElement("div");
-      if (m.from === currentUser) {
+      if (data.from === currentUser) {
         div.className = "msg you";
-        div.textContent = "Bạn: " + m.message;
+        div.textContent = `Bạn: ${data.message}`;
       } else {
         div.className = "msg other";
-        div.textContent = m.from + ": " + m.message;
+        div.textContent = `${data.from}: ${data.message}`;
       }
-      document.getElementById("messages").appendChild(div);
+      messagesDiv.appendChild(div);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
     }
-  </script>
+  }
+
+  function sendMsg() {
+    const input = document.getElementById("msg");
+    const msg = input.value.trim();
+    if (!msg) return;
+    socket.emit("chat_message", { from: currentUser, message: msg });
+    input.value = "";
+  }
+</script>
 </body>
 </html>
