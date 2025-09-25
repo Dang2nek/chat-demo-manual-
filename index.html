@@ -13,13 +13,16 @@
     .msg.other { text-align: left; color: green; }
     .msg.system { text-align: center; color: gray; font-style: italic; }
     .input-area { display: flex; border-top: 1px solid #ddd; }
-    .input-area input { padding: 10px; border: none; outline: none; }
+    .input-area input { flex: 1; padding: 10px; border: none; outline: none; }
     .input-area button { padding: 10px 20px; border: none; background: #0078ff; color: #fff; cursor: pointer; }
     #nameInput { border-bottom: 1px solid #ddd; padding: 10px; width: 100%; }
   </style>
 </head>
 <body>
+  <!-- Ô nhập tên -->
   <input id="nameInput" placeholder="Nhập tên của bạn..." />
+
+  <!-- Khung chat -->
   <div class="chat">
     <div class="messages" id="messages"></div>
     <div class="input-area">
@@ -29,45 +32,49 @@
   </div>
 
   <script>
-    const socket = io("http://localhost:3000"); // Thay bằng link server của bạn
+    // 👉 Thay link này bằng link server socket.io của bạn (VD: wss://xxxx.playit.gg hoặc http://localhost:3000)
+    const socket = io("http://localhost:3000");
+
     const messagesDiv = document.getElementById("messages");
     const nameInput = document.getElementById("nameInput");
 
-    // Lấy tên từ localStorage nếu có
+    // --- Quản lý tên người dùng ---
     let username = localStorage.getItem("chat_username") || "";
     if (username) nameInput.value = username;
 
-    // Khi thay đổi tên
     nameInput.addEventListener("change", () => {
       username = nameInput.value.trim() || "Người dùng";
-      localStorage.setItem("chat_username", username); // lưu tên vào localStorage
-      socket.emit("change_name", username); // gửi tên mới lên server
+      localStorage.setItem("chat_username", username);
+      socket.emit("change_name", username);
     });
 
     socket.on("connect", () => {
-      console.log("✅ Kết nối thành công:", socket.id);
+      console.log("✅ Kết nối:", socket.id);
       if (username) {
         socket.emit("change_name", username);
       }
     });
 
+    // --- Nhận tin nhắn ---
     socket.on("message", (data) => {
       const div = document.createElement("div");
+
       if (data.from === "System") {
         div.className = "msg system";
         div.textContent = data.message;
       } else if (data.from === socket.id) {
         div.className = "msg you";
-        div.textContent = `Bạn (${username}): ${data.message}`;
+        div.textContent = `Bạn (${data.name || username}): ${data.message}`;
       } else {
         div.className = "msg other";
-        const displayName = data.name || data.from;
-        div.textContent = `${displayName}: ${data.message}`;
+        div.textContent = `${data.name || data.from}: ${data.message}`;
       }
+
       messagesDiv.appendChild(div);
       messagesDiv.scrollTop = messagesDiv.scrollHeight;
     });
 
+    // --- Gửi tin nhắn ---
     function sendMsg() {
       const input = document.getElementById("msg");
       const msg = input.value.trim();
