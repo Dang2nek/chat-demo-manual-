@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <title>Chat App</title>
-  <script src="/socket.io/socket.io.js"></script>
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
   <style>
     body { font-family: Arial, sans-serif; margin: 0; background: #f4f4f9; }
     .hidden { display: none; }
@@ -28,6 +28,7 @@
   </style>
 </head>
 <body>
+
   <!-- FORM LOGIN -->
   <div id="loginBox" class="login-box">
     <h2>Đăng nhập</h2>
@@ -58,10 +59,10 @@
   </div>
 
 <script>
-  let socket = io();
+  const API_BASE = "";
+  let socket = null;
   let currentUser = null;
 
-  // Hiện login/register
   function showLogin() {
     document.getElementById("loginBox").classList.remove("hidden");
     document.getElementById("registerBox").classList.add("hidden");
@@ -71,62 +72,73 @@
     document.getElementById("registerBox").classList.remove("hidden");
   }
 
-  // Đăng ký
-  function register() {
+  async function register() {
     const username = document.getElementById("regUser").value.trim();
     const password = document.getElementById("regPass").value.trim();
-    socket.emit("register", { username, password });
+    let res = await fetch(API_BASE + "/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    let data = await res.json();
+    document.getElementById("regMsg").innerText = data.message;
+    if (data.success) showLogin();
   }
-  socket.on("registerSuccess", (msg) => {
-    document.getElementById("regMsg").innerText = msg;
-    showLogin();
-  });
-  socket.on("registerError", (err) => {
-    document.getElementById("regMsg").innerText = err;
-  });
 
-  // Đăng nhập
-  function login() {
+  async function login() {
     const username = document.getElementById("loginUser").value.trim();
     const password = document.getElementById("loginPass").value.trim();
-    socket.emit("login", { username, password });
+    let res = await fetch(API_BASE + "/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    let data = await res.json();
+    document.getElementById("loginMsg").innerText = data.message;
+    if (data.success) {
+      currentUser = username;
+      startChat();
+    }
   }
-  socket.on("loginSuccess", (msg) => {
-    document.getElementById("loginMsg").innerText = msg;
-    currentUser = document.getElementById("loginUser").value.trim();
+
+  function startChat() {
     document.getElementById("loginBox").classList.add("hidden");
     document.getElementById("registerBox").classList.add("hidden");
     document.getElementById("chatBox").classList.remove("hidden");
-  });
-  socket.on("loginError", (err) => {
-    document.getElementById("loginMsg").innerText = err;
-  });
 
-  // Nhận lịch sử tin nhắn
-  socket.on("chatHistory", (messages) => {
-    messages.forEach((m) => addMsg(m));
-  });
+    socket = io();
 
-  // Gửi tin nhắn
+    const messagesDiv = document.getElementById("messages");
+
+    socket.on("message_history", (history) => {
+      messagesDiv.innerHTML = "";
+      history.forEach(msg => addMsg(msg));
+    });
+
+    socket.on("message", (data) => {
+      addMsg(data);
+    });
+
+    function addMsg(data) {
+      const div = document.createElement("div");
+      if (data.from === currentUser) {
+        div.className = "msg you";
+        div.textContent = `Bạn: ${data.message}`;
+      } else {
+        div.className = "msg other";
+        div.textContent = `${data.from}: ${data.message}`;
+      }
+      messagesDiv.appendChild(div);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+  }
+
   function sendMsg() {
     const input = document.getElementById("msg");
     const msg = input.value.trim();
     if (!msg) return;
-    socket.emit("chatMessage", msg);
+    socket.emit("chat_message", { from: currentUser, message: msg });
     input.value = "";
-  }
-
-  // Nhận tin nhắn mới
-  socket.on("chatMessage", (data) => {
-    addMsg(data);
-  });
-
-  function addMsg(data) {
-    const div = document.createElement("div");
-    div.className = (data.from === currentUser) ? "msg you" : "msg other";
-    div.textContent = `${data.from}: ${data.text}`;
-    document.getElementById("messages").appendChild(div);
-    document.getElementById("messages").scrollTop = document.getElementById("messages").scrollHeight;
   }
 </script>
 </body>
