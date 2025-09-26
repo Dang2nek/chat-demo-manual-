@@ -1,246 +1,39 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-  <meta charset="utf-8" />
-  <title>Chat E2E + Register/Login</title>
-  <style>
-    body { font-family: Arial, sans-serif; margin: 20px; }
-    .box { max-width: 480px; margin: 10px auto; border: 1px solid #ddd; padding: 12px; border-radius: 8px; background: #fafafa; }
-    input, button { padding: 8px; margin: 6px 0; width: 100%; box-sizing: border-box; }
-    #chat { height: 320px; overflow-y: auto; border: 1px solid #ccc; padding: 8px; background: #fff; }
-    .msg { margin: 6px 0; }
-    .meta { color: #666; font-size: 0.9em; }
-  </style>
+  <meta charset="UTF-8">
+  <title>Chat App E2E</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h2 style="text-align:center">Chat App — E2E & Retention</h2>
-
-  <div id="auth" class="box">
-    <h3>Đăng ký</h3>
-    <input id="regUser" placeholder="Tên đăng nhập" />
-    <input id="regPass" type="password" placeholder="Mật khẩu" />
-    <button id="btnRegister">Đăng ký</button>
-
-    <hr>
-
-    <h3>Đăng nhập</h3>
-    <input id="loginUser" placeholder="Tên đăng nhập" />
-    <input id="loginPass" type="password" placeholder="Mật khẩu" />
+  <!-- LOGIN -->
+  <div id="loginBox">
+    <h2>Đăng nhập</h2>
+    <input id="loginUser" placeholder="Tên đăng nhập">
+    <input id="loginPass" type="password" placeholder="Mật khẩu">
     <button id="btnLogin">Đăng nhập</button>
+    <p>Chưa có tài khoản? <a href="#" id="showRegister">Đăng ký</a></p>
+    <div id="loginMsg"></div>
   </div>
 
-  <div id="room" class="box" style="display:none;">
-    <h3>Vào phòng</h3>
-    <p>Nhập **passphrase phòng** để mã hóa/giải mã tin nhắn (tất cả phải dùng chung passphrase để đọc được nội dung).</p>
-    <input id="roomPass" placeholder="Passphrase phòng (chia sẻ với mọi người)" />
-    <button id="btnEnter">Vào phòng chat</button>
+  <!-- REGISTER -->
+  <div id="registerBox" style="display:none">
+    <h2>Đăng ký</h2>
+    <input id="regUser" placeholder="Tên đăng nhập">
+    <input id="regPass" type="password" placeholder="Mật khẩu">
+    <button id="btnRegister">Đăng ký</button>
+    <p>Đã có tài khoản? <a href="#" id="showLogin">Đăng nhập</a></p>
+    <div id="regMsg"></div>
   </div>
 
-  <div id="chatUI" class="box" style="display:none;">
-    <div><strong id="who"></strong></div>
-    <div id="chat"></div>
-
-    <div style="margin-top:8px;">
-      <input id="msgInput" placeholder="Nhập tin nhắn..." />
-      <button id="sendBtn">Gửi</button>
-    </div>
-
-    <div id="notices" style="color: darkorange; margin-top:8px;"></div>
+  <!-- CHAT -->
+  <div id="chatBox" style="display:none">
+    <div id="messages" style="height:400px; overflow-y:auto; border:1px solid #ccc; padding:5px;"></div>
+    <input id="msgInput" placeholder="Nhập tin nhắn...">
+    <button id="sendBtn">Gửi</button>
   </div>
 
-<script src="/socket.io/socket.io.js"></script>
-<script>
-/*
-Client-side:
- - Register/login with server (server keeps hashed password)
- - After login, user enters room passphrase (shared secret) used to derive AES-GCM key via PBKDF2
- - Encrypt message plaintext -> send {ciphertext, iv, user}
- - On receiving stored messages, client attempts to decrypt with room passphrase; if fails, shows "[Encrypted]"
-*/
-
-// ---------- helpers: base64 <-> Uint8Array ----------
-function bufToBase64(buf) {
-  const bin = String.fromCharCode(...new Uint8Array(buf));
-  return btoa(bin);
-}
-function base64ToBuf(b64) {
-  const bin = atob(b64);
-  const arr = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
-  return arr.buffer;
-}
-
-// ---------- derive key from passphrase ----------
-async function deriveKey(passphrase, saltStr = "chatroom-salt") {
-  const enc = new TextEncoder();
-  const passKey = await window.crypto.subtle.importKey(
-    "raw",
-    enc.encode(passphrase),
-    "PBKDF2",
-    false,
-    ["deriveKey"]
-  );
-  const key = await window.crypto.subtle.deriveKey(
-    {
-      name: "PBKDF2",
-      salt: enc.encode(saltStr),
-      iterations: 150000,
-      hash: "SHA-256"
-    },
-    passKey,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"]
-  );
-  return key;
-}
-
-async function encryptWithKey(key, plaintext) {
-  const iv = window.crypto.getRandomValues(new Uint8Array(12));
-  const enc = new TextEncoder();
-  const ct = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv }, key, enc.encode(plaintext));
-  return { ciphertext: bufToBase64(ct), iv: bufToBase64(iv) };
-}
-
-async function decryptWithKey(key, ciphertextB64, ivB64) {
-  try {
-    const ctBuf = base64ToBuf(ciphertextB64);
-    const ivBuf = base64ToBuf(ivB64);
-    const plainBuf = await window.crypto.subtle.decrypt({ name: "AES-GCM", iv: new Uint8Array(ivBuf) }, key, ctBuf);
-    const dec = new TextDecoder();
-    return dec.decode(plainBuf);
-  } catch (e) {
-    // decryption failed
-    return null;
-  }
-}
-
-// ---------- App logic ----------
-const socket = io(); // connect to same origin
-let currentUser = null;
-let roomKey = null; // CryptoKey
-let roomPassphrase = null;
-
-const regUser = document.getElementById("regUser");
-const regPass = document.getElementById("regPass");
-const btnRegister = document.getElementById("btnRegister");
-
-const loginUser = document.getElementById("loginUser");
-const loginPass = document.getElementById("loginPass");
-const btnLogin = document.getElementById("btnLogin");
-
-const roomDiv = document.getElementById("room");
-const authDiv = document.getElementById("auth");
-const chatUI = document.getElementById("chatUI");
-const who = document.getElementById("who");
-
-const roomPass = document.getElementById("roomPass");
-const btnEnter = document.getElementById("btnEnter");
-
-const chatBox = document.getElementById("chat");
-const msgInput = document.getElementById("msgInput");
-const sendBtn = document.getElementById("sendBtn");
-const notices = document.getElementById("notices");
-
-// Register
-btnRegister.addEventListener("click", async () => {
-  const u = regUser.value.trim(), p = regPass.value;
-  if (!u || !p) return alert("Nhập username và password");
-  const res = await fetch("/register", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ username: u, password: p })
-  });
-  const data = await res.json();
-  if (data.success) {
-    alert("Đăng ký thành công. Mời đăng nhập.");
-  } else {
-    alert(data.error || "Lỗi đăng ký");
-  }
-});
-
-// Login
-btnLogin.addEventListener("click", async () => {
-  const u = loginUser.value.trim(), p = loginPass.value;
-  if (!u || !p) return alert("Nhập username và password");
-  const res = await fetch("/login", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ username: u, password: p })
-  });
-  const data = await res.json();
-  if (data.success) {
-    currentUser = u;
-    authDiv.style.display = "none";
-    roomDiv.style.display = "block";
-    who.textContent = `Bạn: ${currentUser}`;
-  } else {
-    alert(data.error || "Lỗi đăng nhập");
-  }
-});
-
-// Enter room - derive key from passphrase (shared)
-btnEnter.addEventListener("click", async () => {
-  const pass = roomPass.value;
-  if (!currentUser) return alert("Bạn chưa login");
-  if (!pass) return alert("Nhập passphrase phòng");
-  roomPassphrase = pass;
-  roomKey = await deriveKey(pass, "chatroom-salt-v1"); // fixed salt so all clients derive same key
-  // notify server we're joined
-  socket.emit("join", { username: currentUser });
-  // ask for history
-  socket.emit("load_history");
-  roomDiv.style.display = "none";
-  chatUI.style.display = "block";
-});
-
-// handle history (array of docs: ciphertext, iv, user, createdAt, warned)
-socket.on("history", async (docs) => {
-  chatBox.innerHTML = "";
-  for (const d of docs) {
-    const plain = roomKey ? await decryptWithKey(roomKey, d.ciphertext, d.iv) : null;
-    addMessage(d.user, plain === null ? "[Encrypted]" : plain, d.createdAt);
-  }
-});
-
-// handle new message broadcast
-socket.on("new_message", async (d) => {
-  const plain = roomKey ? await decryptWithKey(roomKey, d.ciphertext, d.iv) : null;
-  addMessage(d.user, plain === null ? "[Encrypted]" : plain, d.createdAt);
-});
-
-// deletion warning from server
-socket.on("deletion_warning", (data) => {
-  notices.textContent = data.message || "Tin nhắn cũ sẽ bị xóa trong 7 ngày";
-  // also pop a browser alert
-  alert(data.message || "Tin nhắn cũ sẽ bị xóa trong 7 ngày");
-});
-
-// send button - encrypt then send
-sendBtn.addEventListener("click", async () => {
-  const t = msgInput.value.trim();
-  if (!t) return;
-  if (!roomKey) return alert("Bạn phải nhập passphrase phòng trước");
-  // encrypt
-  const { ciphertext, iv } = await encryptWithKey(roomKey, t);
-  // send encrypted payload (server stores it as-is)
-  socket.emit("send_encrypted", { ciphertext, iv, user: currentUser });
-  msgInput.value = "";
-});
-
-// helper to append message
-function addMessage(user, text, time) {
-  const div = document.createElement("div");
-  div.className = "msg";
-  const ts = time ? new Date(time).toLocaleString() : "";
-  div.innerHTML = `<div class="meta">${user} ${ts}</div><div>${escapeHtml(text)}</div>`;
-  chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
-}
-function escapeHtml(s) {
-  if (!s) return "";
-  return s.replace(/[&<>"]/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;' }[c]));
-}
-</script>
+  <script src="/socket.io/socket.io.js"></script>
+  <script src="client.js"></script>
 </body>
 </html>
