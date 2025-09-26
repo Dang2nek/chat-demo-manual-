@@ -2,10 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>Chat App with Login</title>
+  <title>Chat App</title>
   <style>
     body { font-family: sans-serif; margin: 20px; }
-    #login, #chatroom { max-width: 400px; margin: auto; }
+    #register, #login, #chatroom { max-width: 400px; margin: auto; }
     #chat { list-style: none; margin: 0; padding: 10px; height: 300px; overflow-y: scroll; border: 1px solid #ccc; }
     #chat li { margin-bottom: 5px; }
     form { display: flex; margin-top: 10px; }
@@ -17,10 +17,20 @@
 <body>
   <h2>💬 Chat App</h2>
 
-  <!-- Màn hình đăng nhập -->
+  <!-- Đăng ký -->
+  <div id="register">
+    <h3>Đăng ký</h3>
+    <input id="regUser" placeholder="Tên đăng nhập" />
+    <input id="regPass" type="password" placeholder="Mật khẩu" />
+    <button id="registerBtn">Đăng ký</button>
+  </div>
+
+  <!-- Đăng nhập -->
   <div id="login">
-    <input id="username" placeholder="Nhập tên của bạn..." />
-    <button id="loginBtn">Vào phòng chat</button>
+    <h3>Đăng nhập</h3>
+    <input id="loginUser" placeholder="Tên đăng nhập" />
+    <input id="loginPass" type="password" placeholder="Mật khẩu" />
+    <button id="loginBtn">Đăng nhập</button>
   </div>
 
   <!-- Phòng chat -->
@@ -35,22 +45,49 @@
   <script src="/socket.io/socket.io.js"></script>
   <script>
     const socket = io();
+    const registerDiv = document.getElementById("register");
     const loginDiv = document.getElementById("login");
     const chatroomDiv = document.getElementById("chatroom");
+
+    const regUser = document.getElementById("regUser");
+    const regPass = document.getElementById("regPass");
+    const registerBtn = document.getElementById("registerBtn");
+
+    const loginUser = document.getElementById("loginUser");
+    const loginPass = document.getElementById("loginPass");
     const loginBtn = document.getElementById("loginBtn");
-    const usernameInput = document.getElementById("username");
+
     const chat = document.getElementById("chat");
     const form = document.getElementById("form");
     const input = document.getElementById("input");
 
     let username = "";
 
-    loginBtn.addEventListener("click", () => {
-      username = usernameInput.value.trim();
-      if (username) {
+    registerBtn.addEventListener("click", async () => {
+      const res = await fetch("/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: regUser.value, password: regPass.value })
+      });
+      const data = await res.json();
+      alert(data.success ? "Đăng ký thành công!" : data.error);
+    });
+
+    loginBtn.addEventListener("click", async () => {
+      const res = await fetch("/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: loginUser.value, password: loginPass.value })
+      });
+      const data = await res.json();
+      if (data.success) {
+        username = loginUser.value;
         socket.emit("set username", username);
         loginDiv.style.display = "none";
+        registerDiv.style.display = "none";
         chatroomDiv.style.display = "block";
+      } else {
+        alert(data.error);
       }
     });
 
