@@ -1,86 +1,110 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<title>Chat E2E</title>
-<style>
-body { font-family: Arial; padding: 20px; }
-#chat { display:none; border:1px solid #ccc; padding:10px; max-height:300px; overflow-y:auto; }
-</style>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; style-src 'self' 'unsafe-inline';">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Chat E2E App</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; padding: 0; background: #f5f5f5; }
+    #chat-container { max-width: 600px; margin: auto; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
+    #login-section, #chat-section { margin-bottom: 20px; }
+    input, button { padding: 8px; margin: 4px 0; width: 100%; box-sizing: border-box; }
+    #messages { border: 1px solid #ccc; height: 300px; overflow-y: scroll; padding: 8px; background: #fafafa; }
+    .message { margin: 5px 0; }
+    .system { color: gray; font-style: italic; }
+    #socket-id { font-size: 0.85em; color: #555; }
+  </style>
 </head>
 <body>
+  <div id="chat-container">
+    <div id="login-section">
+      <h3>Đăng nhập / Đăng ký</h3>
+      <input type="text" id="username" placeholder="Tên đăng nhập">
+      <input type="password" id="password" placeholder="Mật khẩu">
+      <button id="register-btn">Đăng ký</button>
+      <button id="login-btn">Đăng nhập</button>
+      <div id="login-status"></div>
+    </div>
 
-<h2>Đăng ký / Đăng nhập</h2>
-<div id="auth">
-    <input id="username" placeholder="Username">
-    <input id="password" type="password" placeholder="Password">
-    <button id="btnRegister">Register</button>
-    <button id="btnLogin">Login</button>
-    <p id="authMsg"></p>
-</div>
+    <div id="chat-section" style="display:none;">
+      <div id="socket-id"></div>
+      <div id="messages"></div>
+      <input type="text" id="message-input" placeholder="Nhập tin nhắn...">
+      <button id="send-btn">Gửi</button>
+    </div>
+  </div>
 
-<div id="chat">
-    <p>Socket ID: <span id="socketId"></span></p>
-    <input id="passphrase" placeholder="Passphrase for E2E">
-    <input id="toUser" placeholder="Send to username">
-    <input id="msg" placeholder="Message">
-    <button id="sendBtn">Send</button>
-    <div id="messages"></div>
-</div>
+  <script src="/socket.io/socket.io.js"></script>
+  <script>
+    const socket = io();
 
-<script src="/socket.io/socket.io.js"></script>
-<script>
-const socket = io();
+    const loginSection = document.getElementById('login-section');
+    const chatSection = document.getElementById('chat-section');
+    const loginStatus = document.getElementById('login-status');
+    const messages = document.getElementById('messages');
+    const socketIdEl = document.getElementById('socket-id');
 
-let username = '';
-socket.on('socket_id', id => document.getElementById('socketId').innerText = id);
+    // Đăng ký
+    document.getElementById('register-btn').addEventListener('click', () => {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (!username || !password) return alert("Điền đủ thông tin");
+      socket.emit('register', { username, password });
+    });
 
-document.getElementById('btnRegister').onclick = async () => {
-    username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-    const res = await fetch('/register', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({username,password})
-    }).then(r=>r.json());
-    document.getElementById('authMsg').innerText = res.success ? 'Registered!' : res.error;
-};
+    // Đăng nhập
+    document.getElementById('login-btn').addEventListener('click', () => {
+      const username = document.getElementById('username').value.trim();
+      const password = document.getElementById('password').value;
+      if (!username || !password) return alert("Điền đủ thông tin");
+      socket.emit('login', { username, password });
+    });
 
-document.getElementById('btnLogin').onclick = async () => {
-    username = document.getElementById('username').value;
-    const password = document.getElementById('password').value;
-    const res = await fetch('/login', {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({username,password})
-    }).then(r=>r.json());
-    if(res.success){
-        document.getElementById('auth').style.display='none';
-        document.getElementById('chat').style.display='block';
-    } else {
-        document.getElementById('authMsg').innerText = res.error;
-    }
-};
+    // Nhận kết quả đăng nhập/đăng ký
+    socket.on('login-success', data => {
+      loginSection.style.display = 'none';
+      chatSection.style.display = 'block';
+      socketIdEl.textContent = "Socket ID: " + data.socketId;
+      messages.innerHTML += `<div class="system">Chào mừng ${data.username}!</div>`;
+    });
 
-// send message
-document.getElementById('sendBtn').onclick = () => {
-    const msg = document.getElementById('msg').value;
-    const passphrase = document.getElementById('passphrase').value;
-    const toUser = document.getElementById('toUser').value;
-    socket.emit('send_message',{from:username,to:toUser,message:msg,passphrase});
-};
+    socket.on('login-failed', msg => {
+      loginStatus.textContent = msg;
+    });
 
-// receive message
-socket.on('receive_message', data => {
-    const key = cryptoJS.SHA256(document.getElementById('passphrase').value);
-    const parts = data.encrypted.split(':');
-    const iv = CryptoJS.enc.Hex.parse(parts[0]);
-    const encrypted = parts[1];
-    const decrypted = CryptoJS.AES.decrypt(encrypted, key, { iv: iv }).toString(CryptoJS.enc.Utf8);
-    const msgDiv = document.createElement('div');
-    msgDiv.innerText = `${data.from} -> ${data.to}: ${decrypted}`;
-    document.getElementById('messages').appendChild(msgDiv);
-});
-</script>
+    socket.on('register-success', msg => {
+      loginStatus.textContent = msg;
+    });
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+    socket.on('register-failed', msg => {
+      loginStatus.textContent = msg;
+    });
+
+    // Nhận tin nhắn
+    socket.on('chat-message', msg => {
+      messages.innerHTML += `<div class="message"><strong>${msg.user}:</strong> ${msg.text}</div>`;
+      messages.scrollTop = messages.scrollHeight;
+    });
+
+    // Gửi tin nhắn
+    document.getElementById('send-btn').addEventListener('click', () => {
+      const msg = document.getElementById('message-input').value;
+      if (!msg.trim()) return;
+      socket.emit('chat-message', msg);
+      document.getElementById('message-input').value = '';
+    });
+
+    // Thông báo hệ thống
+    socket.on('system-message', msg => {
+      messages.innerHTML += `<div class="message system">${msg}</div>`;
+      messages.scrollTop = messages.scrollHeight;
+    });
+
+    // Hiển thị socket id khi kết nối
+    socket.on('connect', () => {
+      socketIdEl.textContent = "Socket ID: " + socket.id;
+    });
+  </script>
 </body>
 </html>
