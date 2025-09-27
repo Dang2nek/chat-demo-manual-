@@ -1,80 +1,89 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
 <meta charset="UTF-8">
-<title>Chat E2E + Socket ID</title>
+<title>Chat E2E</title>
 <style>
-  body { font-family: Arial; padding: 20px; }
-  #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; }
-  #myID { font-weight: bold; color: blue; }
+  body { font-family: sans-serif; }
+  #chat { height: 300px; overflow-y: scroll; border: 1px solid #ccc; margin-bottom: 10px; padding:5px; }
+  #message { width: 70%; }
 </style>
 </head>
 <body>
-
-<h2>Your Socket ID: <span id="myID">...</span></h2>
-<h2>Passphrase: <span id="myPass">...</span></h2>
+<h2>Chat Room</h2>
+<label>Username:</label><input id="username"><br>
+<label>Password:</label><input type="password" id="password"><br>
+<button id="register">Register</button>
+<button id="login">Login</button>
+<p id="info"></p>
 
 <div id="chat"></div>
+<input id="message"><button id="send">Send</button>
+<p>Socket ID: <span id="socketid"></span></p>
 
-<input id="msgInput" placeholder="Type a message" autocomplete="off"/>
-<button id="sendBtn">Send</button>
-
-<h3>Login / Register</h3>
-<input id="username" placeholder="Username"/>
-<input id="password" placeholder="Password" type="password"/>
-<button id="loginBtn">Login</button>
-<button id="registerBtn">Register</button>
-<div id="loginStatus"></div>
-
-<script src="/socket.io/socket.io.js"></script>
+<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
 const socket = io();
+let username = "";
+let passphrase = "";
 
-// Hiển thị socket ID và passphrase
-socket.on('yourID', (data) => {
-  document.getElementById('myID').innerText = data.id;
-  document.getElementById('myPass').innerText = data.passphrase;
-});
+// Register
+document.getElementById("register").onclick = async () => {
+  const u = document.getElementById("username").value;
+  const p = document.getElementById("password").value;
+  const res = await fetch("/register", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({username:u,password:p})
+  });
+  document.getElementById("info").innerText = await res.text();
+};
 
-// Nhận tin nhắn
-socket.on('chatMessage', (data) => {
-  const chat = document.getElementById('chat');
-  chat.innerHTML += `<p><strong>${data.id}:</strong> ${data.msg}</p>`;
+// Login
+document.getElementById("login").onclick = async () => {
+  const u = document.getElementById("username").value;
+  const p = document.getElementById("password").value;
+  const res = await fetch("/login", {
+    method:"POST",
+    headers:{"Content-Type":"application/json"},
+    body: JSON.stringify({username:u,password:p})
+  });
+  const data = await res.json();
+  username = data.username;
+  passphrase = data.passphrase;
+  document.getElementById("info").innerText = "Logged in as "+username;
+  socket.emit("join",{username,passphrase});
+  document.getElementById("socketid").innerText = socket.id;
+};
+
+// Send message
+document.getElementById("send").onclick = () => {
+  const msg = document.getElementById("message").value;
+  socket.emit("chat message", msg);
+  document.getElementById("message").value = "";
+};
+
+// Receive chat
+socket.on("chat message", (msg) => {
+  const chat = document.getElementById("chat");
+  chat.innerHTML += "<b>"+msg.username+":</b> "+msg.text+"<br>";
   chat.scrollTop = chat.scrollHeight;
 });
 
-// Gửi tin nhắn
-document.getElementById('sendBtn').onclick = () => {
-  const input = document.getElementById('msgInput');
-  if(input.value.trim() !== '') {
-    socket.emit('chatMessage', { msg: input.value });
-    input.value = '';
-  }
-};
-
-// ==== Login/Register ====
-document.getElementById('registerBtn').onclick = async () => {
-  const username = document.getElementById('username').value;
-  const password = document.getElementById('password').value;
-  const res = await fetch('/register', {
-    method:'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({username,password})
+// Receive history
+socket.on("chat history", (msgs)=>{
+  const chat = document.getElementById("chat");
+  chat.innerHTML = "";
+  msgs.forEach(m=>{
+    chat.innerHTML += "<b>"+m.username+":</b> "+m.text+"<br>";
   });
-  document.getElementById('loginStatus').innerText = await res.text();
-};
+  chat.scrollTop = chat.scrollHeight;
+});
 
-document.getElementById('loginBtn').onclick = async () => {
-  const username = document.getElementById('username').value;
-  const password = document.getElementById('password').value;
-  const res = await fetch('/login', {
-    method:'POST',
-    headers: {'Content-Type':'application/json'},
-    body: JSON.stringify({username,password})
-  });
-  document.getElementById('loginStatus').innerText = await res.text();
-};
+// Block PrintScreen
+document.addEventListener("keydown", e=>{
+  if(e.key==="PrintScreen"){alert("Screenshot blocked"); e.preventDefault();}
+});
 </script>
-
 </body>
 </html>
