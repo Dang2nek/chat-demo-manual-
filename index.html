@@ -3,37 +3,155 @@
 <head>
   <meta charset="UTF-8">
   <title>Chat App E2E</title>
-  <link rel="stylesheet" href="style.css">
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 0; background: #f4f4f9; }
+    .hidden { display: none; }
+
+    .login-box, .register-box {
+      max-width: 300px; margin: 100px auto; padding: 20px;
+      background: white; border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+    }
+    .login-box h2, .register-box h2 { margin-bottom: 15px; }
+    input, button { width: 100%; padding: 10px; margin: 5px 0; }
+    button { background: #0078ff; border: none; color: white; cursor: pointer; }
+
+    .chat { display: flex; flex-direction: column; height: 100vh; }
+    .messages { flex: 1; padding: 10px; overflow-y: auto; background: #fff; }
+    .msg { margin: 5px 0; }
+    .msg.you { text-align: right; color: blue; }
+    .msg.other { text-align: left; color: green; }
+    .msg.system { text-align: center; color: gray; font-style: italic; }
+    .input-area { display: flex; border-top: 1px solid #ddd; }
+    .input-area input { flex: 1; padding: 10px; border: none; outline: none; }
+    .input-area button { padding: 10px 20px; border: none; background: #0078ff; color: #fff; cursor: pointer; }
+  </style>
 </head>
 <body>
-  <!-- LOGIN -->
-  <div id="loginBox">
+
+  <!-- FORM LOGIN -->
+  <div id="loginBox" class="login-box">
     <h2>Đăng nhập</h2>
     <input id="loginUser" placeholder="Tên đăng nhập">
     <input id="loginPass" type="password" placeholder="Mật khẩu">
-    <button id="btnLogin">Đăng nhập</button>
-    <p>Chưa có tài khoản? <a href="#" id="showRegister">Đăng ký</a></p>
+    <button onclick="login()">Đăng nhập</button>
+    <p>Chưa có tài khoản? <a href="#" onclick="showRegister()">Đăng ký</a></p>
     <div id="loginMsg"></div>
   </div>
 
-  <!-- REGISTER -->
-  <div id="registerBox" style="display:none">
+  <!-- FORM REGISTER -->
+  <div id="registerBox" class="register-box hidden">
     <h2>Đăng ký</h2>
     <input id="regUser" placeholder="Tên đăng nhập">
     <input id="regPass" type="password" placeholder="Mật khẩu">
-    <button id="btnRegister">Đăng ký</button>
-    <p>Đã có tài khoản? <a href="#" id="showLogin">Đăng nhập</a></p>
+    <button onclick="register()">Đăng ký</button>
+    <p>Đã có tài khoản? <a href="#" onclick="showLogin()">Đăng nhập</a></p>
     <div id="regMsg"></div>
   </div>
 
   <!-- CHAT -->
-  <div id="chatBox" style="display:none">
-    <div id="messages" style="height:400px; overflow-y:auto; border:1px solid #ccc; padding:5px;"></div>
-    <input id="msgInput" placeholder="Nhập tin nhắn...">
-    <button id="sendBtn">Gửi</button>
+  <div id="chatBox" class="chat hidden">
+    <div class="messages" id="messages"></div>
+    <div class="input-area">
+      <input id="msg" placeholder="Nhập tin nhắn...">
+      <button onclick="sendMsg()">Gửi</button>
+    </div>
   </div>
 
-  <script src="/socket.io/socket.io.js"></script>
-  <script src="client.js"></script>
+<script>
+  const API_BASE = ""; // server chung domain
+  let socket = null;
+  let currentUser = null;
+  let passphrase = null;
+
+  function showLogin() {
+    document.getElementById("loginBox").classList.remove("hidden");
+    document.getElementById("registerBox").classList.add("hidden");
+  }
+  function showRegister() {
+    document.getElementById("loginBox").classList.add("hidden");
+    document.getElementById("registerBox").classList.remove("hidden");
+  }
+
+  async function register() {
+    const username = document.getElementById("regUser").value.trim();
+    const password = document.getElementById("regPass").value.trim();
+    let res = await fetch(API_BASE + "/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    let data = await res.json();
+    document.getElementById("regMsg").innerText = data.message;
+    if (data.success) showLogin();
+  }
+
+  async function login() {
+    const username = document.getElementById("loginUser").value.trim();
+    const password = document.getElementById("loginPass").value.trim();
+    let res = await fetch(API_BASE + "/login", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password })
+    });
+    let data = await res.json();
+    document.getElementById("loginMsg").innerText = data.message;
+    if (data.success) {
+      currentUser = username;
+      startChat();
+    }
+  }
+
+  function startChat() {
+    document.getElementById("loginBox").classList.add("hidden");
+    document.getElementById("registerBox").classList.add("hidden");
+    document.getElementById("chatBox").classList.remove("hidden");
+
+    socket = io();
+
+    const messagesDiv = document.getElementById("messages");
+
+    socket.on("set_passphrase", (pp) => {
+      passphrase = pp;
+    });
+
+    socket.on("message_history", (history) => {
+      history.forEach(msg => addMsg(msg));
+    });
+
+    socket.on("message", (data) => {
+      addMsg(data);
+    });
+
+    function addMsg(data) {
+      const div = document.createElement("div");
+      let text = data.message;
+      if (passphrase) {
+        try {
+          text = CryptoJS.AES.decrypt(data.message, passphrase).toString(CryptoJS.enc.Utf8);
+        } catch {}
+      }
+      if (data.from === currentUser) {
+        div.className = "msg you";
+        div.textContent = `Bạn: ${text}`;
+      } else {
+        div.className = "msg other";
+        div.textContent = `${data.from}: ${text}`;
+      }
+      messagesDiv.appendChild(div);
+      messagesDiv.scrollTop = messagesDiv.scrollHeight;
+    }
+  }
+
+  function sendMsg() {
+    const input = document.getElementById("msg");
+    const msg = input.value.trim();
+    if (!msg || !passphrase) return;
+    const encrypted = CryptoJS.AES.encrypt(msg, passphrase).toString();
+    socket.emit("chat_message", { from: currentUser, message: encrypted });
+    input.value = "";
+  }
+</script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 </body>
 </html>
