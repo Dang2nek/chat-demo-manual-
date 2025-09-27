@@ -1,105 +1,86 @@
-require('dotenv').config();
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const bcrypt = require('bcryptjs');
-const { MongoClient } = require('mongodb');
-const CryptoJS = require('crypto-js');
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Chat E2E</title>
+<style>
+body { font-family: Arial; padding: 20px; }
+#chat { display:none; border:1px solid #ccc; padding:10px; max-height:300px; overflow-y:auto; }
+</style>
+</head>
+<body>
 
-const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+<h2>Đăng ký / Đăng nhập</h2>
+<div id="auth">
+    <input id="username" placeholder="Username">
+    <input id="password" type="password" placeholder="Password">
+    <button id="btnRegister">Register</button>
+    <button id="btnLogin">Login</button>
+    <p id="authMsg"></p>
+</div>
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+<div id="chat">
+    <p>Socket ID: <span id="socketId"></span></p>
+    <input id="passphrase" placeholder="Passphrase for E2E">
+    <input id="toUser" placeholder="Send to username">
+    <input id="msg" placeholder="Message">
+    <button id="sendBtn">Send</button>
+    <div id="messages"></div>
+</div>
 
-const uri = process.env.MONGODB_URI; // MongoDB Atlas
-const client = new MongoClient(uri);
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const socket = io();
 
-let db, usersCol, messagesCol;
+let username = '';
+socket.on('socket_id', id => document.getElementById('socketId').innerText = id);
 
-async function initDb(){
-    await client.connect();
-    db = client.db('chatapp');
-    usersCol = db.collection('users');
-    messagesCol = db.collection('messages');
-}
-initDb().catch(console.error);
+document.getElementById('btnRegister').onclick = async () => {
+    username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const res = await fetch('/register', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username,password})
+    }).then(r=>r.json());
+    document.getElementById('authMsg').innerText = res.success ? 'Registered!' : res.error;
+};
 
-app.get('/', (req,res)=>{
-    res.sendFile(__dirname + '/index.html');
+document.getElementById('btnLogin').onclick = async () => {
+    username = document.getElementById('username').value;
+    const password = document.getElementById('password').value;
+    const res = await fetch('/login', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({username,password})
+    }).then(r=>r.json());
+    if(res.success){
+        document.getElementById('auth').style.display='none';
+        document.getElementById('chat').style.display='block';
+    } else {
+        document.getElementById('authMsg').innerText = res.error;
+    }
+};
+
+// send message
+document.getElementById('sendBtn').onclick = () => {
+    const msg = document.getElementById('msg').value;
+    const passphrase = document.getElementById('passphrase').value;
+    const toUser = document.getElementById('toUser').value;
+    socket.emit('send_message',{from:username,to:toUser,message:msg,passphrase});
+};
+
+// receive message
+socket.on('receive_message', data => {
+    const key = cryptoJS.SHA256(document.getElementById('passphrase').value);
+    const parts = data.encrypted.split(':');
+    const iv = CryptoJS.enc.Hex.parse(parts[0]);
+    const encrypted = parts[1];
+    const decrypted = CryptoJS.AES.decrypt(encrypted, key, { iv: iv }).toString(CryptoJS.enc.Utf8);
+    const msgDiv = document.createElement('div');
+    msgDiv.innerText = `${data.from} -> ${data.to}: ${decrypted}`;
+    document.getElementById('messages').appendChild(msgDiv);
 });
+</script>
 
-// Register endpoint
-app.post('/register', async (req,res)=>{
-    const { username, password } = req.body;
-    if(!username || !password) return res.status(400).send("Missing fields");
-    const exists = await usersCol.findOne({ username });
-    if(exists) return res.status(400).send("Username exists");
-    const hash = await bcrypt.hash(password, 10);
-    await usersCol.insertOne({ username, password: hash });
-    res.send("Registered");
-});
-
-// Login endpoint
-app.post('/login', async (req,res)=>{
-    const { username, password } = req.body;
-    if(!username || !password) return res.status(400).send("Missing fields");
-    const user = await usersCol.findOne({ username });
-    if(!user) return res.status(400).send("User not found");
-    const valid = await bcrypt.compare(password, user.password);
-    if(!valid) return res.status(400).send("Invalid password");
-    res.send("Logged in");
-});
-
-io.on('connection', (socket)=>{
-    console.log('User connected:', socket.id);
-
-    // Send socket ID to client
-    socket.emit('socketId', socket.id);
-
-    socket.on('chatMessage', async ({from,msg,passphrase})=>{
-        if(!msg) return;
-        try {
-            const encrypted = CryptoJS.AES.encrypt(msg, passphrase).toString();
-            const messageDoc = { from, msg: encrypted, passphrase, createdAt: new Date() };
-            await messagesCol.insertOne(messageDoc);
-            io.emit('chatMessage', { from, msg: encrypted });
-        } catch(err){
-            console.error(err);
-        }
-    });
-
-    // Load previous messages
-    socket.on('loadMessages', async ({passphrase})=>{
-        const msgs = await messagesCol.find({}).sort({createdAt:1}).toArray();
-        msgs.forEach(m=>{
-            let decrypted = "[Cannot decrypt]";
-            try{
-                if(m.msg && passphrase){
-                    decrypted = CryptoJS.AES.decrypt(m.msg, passphrase).toString(CryptoJS.enc.Utf8);
-                }
-            }catch{}
-            socket.emit('chatMessage',{from:m.from, msg:decrypted});
-        });
-    });
-
-    socket.on('disconnect', ()=>{
-        console.log('User disconnected:', socket.id);
-    });
-});
-
-// Auto-delete old messages every day
-setInterval(async ()=>{
-    const twoMonthsAgo = new Date(Date.now() - 1000*60*60*24*60);
-    const oneWeekAgo = new Date(Date.now() - 1000*60*60*24*53); // 7 days before 2 months
-    const oldMsgs = await messagesCol.find({createdAt: {$lt: twoMonthsAgo}}).toArray();
-    oldMsgs.forEach(m=>{
-        io.emit('deleteNotice', {from:m.from, msg:m.msg});
-    });
-    await messagesCol.deleteMany({createdAt: {$lt: twoMonthsAgo}});
-}, 1000*60*60*24); // every 24h
-
-server.listen(process.env.PORT || 3000, ()=>{
-    console.log('Server running on port', process.env.PORT || 3000);
-});
+<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
+</body>
+</html>
