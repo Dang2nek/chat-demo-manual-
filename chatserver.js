@@ -1,108 +1,118 @@
 require('dotenv').config();
 const express = require('express');
-const { MongoClient } = require('mongodb');
-const bcrypt = require('bcryptjs');
 const http = require('http');
 const { Server } = require('socket.io');
-const CryptoJS = require('crypto-js');
+const bcrypt = require('bcryptjs');
+const { MongoClient } = require('mongodb');
+const crypto = require('crypto');
 
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server);
 
-const PORT = process.env.PORT || 3000;
-const MONGODB_URI = process.env.MONGODB_URI;
-const DB_NAME = 'chatapp';
-
-if (!MONGODB_URI) {
-  console.error('❌ MONGODB_URI is not defined!');
-  process.exit(1);
-}
-
-app.use(express.urlencoded({ extended: true }));
 app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
-// Serve single HTML file
+// MongoDB connection
+const uri = process.env.MONGODB_URI;
+const client = new MongoClient(uri);
+
+let db;
+client.connect().then(() => {
+  db = client.db('chatapp');
+  console.log('Connected to MongoDB');
+});
+
+// Serve HTML
 app.get('/', (req, res) => {
   res.sendFile(__dirname + '/index.html');
 });
 
-const client = new MongoClient(MONGODB_URI);
-let usersCollection, messagesCollection;
+// ==== API cho đăng ký + đăng nhập ====
+app.post('/register', async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).send('Missing fields');
 
-async function startDB() {
-  await client.connect();
-  const db = client.db(DB_NAME);
-  usersCollection = db.collection('users');
-  messagesCollection = db.collection('messages');
-  console.log('✅ Connected to MongoDB');
-}
-startDB().catch(console.error);
+  const exists = await db.collection('users').findOne({ username });
+  if (exists) return res.status(400).send('Username exists');
 
-const userKeys = {}; // socket.id -> key
+  const hashed = await bcrypt.hash(password, 10);
+  await db.collection('users').insertOne({ username, password: hashed });
+  res.send('Registered');
+});
 
+app.post('/login', async (req, res) => {
+  const { username, password } = req.body;
+  const user = await db.collection('users').findOne({ username });
+  if (!user) return res.status(400).send('User not found');
+
+  const ok = await bcrypt.compare(password, user.password);
+  if (!ok) return res.status(400).send('Wrong password');
+
+  res.send('Logged in');
+});
+
+// ==== Socket.io ====
 io.on('connection', (socket) => {
-  console.log('A user connected:', socket.id);
+  console.log('User connected:', socket.id);
 
-  // Generate a random key for this socket session
-  const key = CryptoJS.lib.WordArray.random(16).toString();
-  userKeys[socket.id] = key;
-  socket.emit('key', key);
+  // Tạo passphrase ngẫu nhiên cho E2E
+  const passphrase = crypto.randomBytes(16).toString('hex');
+  socket.passphrase = passphrase;
 
-  socket.on('register', async ({ username, password }) => {
-    const existing = await usersCollection.findOne({ username });
-    if (existing) {
-      socket.emit('registerResponse', { success: false, message: 'Username taken' });
-    } else {
-      const hash = await bcrypt.hash(password, 10);
-      await usersCollection.insertOne({ username, password: hash });
-      socket.emit('registerResponse', { success: true, message: 'Registered!' });
-    }
-  });
+  // Gửi socket.id và passphrase về client
+  socket.emit('yourID', { id: socket.id, passphrase });
 
-  socket.on('login', async ({ username, password }) => {
-    const user = await usersCollection.findOne({ username });
-    if (!user) {
-      socket.emit('loginResponse', { success: false, message: 'User not found' });
-    } else {
-      const match = await bcrypt.compare(password, user.password);
-      if (match) socket.emit('loginResponse', { success: true, username });
-      else socket.emit('loginResponse', { success: false, message: 'Wrong password' });
-    }
-  });
+  // Nhận tin nhắn từ client và mã hóa E2E
+  socket.on('chatMessage', async (data) => {
+    const { msg } = data;
+    const encrypted = encrypt(msg, socket.passphrase);
 
-  socket.on('sendMessage', async ({ to, message }) => {
-    const key = userKeys[socket.id];
-    const encrypted = CryptoJS.AES.encrypt(message, key).toString();
-    await messagesCollection.insertOne({ from: socket.id, to, message: encrypted, createdAt: new Date() });
-    socket.emit('messageSent', { success: true });
+    await db.collection('messages').insertOne({
+      socketId: socket.id,
+      msg: encrypted,
+      createdAt: new Date()
+    });
+
+    io.emit('chatMessage', { id: socket.id, msg: encrypted });
   });
 
   socket.on('disconnect', () => {
-    delete userKeys[socket.id];
+    console.log('User disconnected:', socket.id);
   });
 });
 
-// ================== Auto delete old messages ==================
-async function cleanupMessages() {
+// ==== Xóa tin nhắn cũ sau 2 tháng, báo trước 1 tuần ====
+setInterval(async () => {
   const now = new Date();
-  const twoMonthsAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000); // 60 days
-  const oneWeekBefore = new Date(now.getTime() - 53 * 24 * 60 * 60 * 1000); // 53 days
+  const twoMonthsAgo = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000);
+  const oneWeekAgo = new Date(now.getTime() - 53 * 24 * 60 * 60 * 1000);
 
-  // Find messages to warn users
-  const messagesToWarn = await messagesCollection.find({ createdAt: { $gte: oneWeekBefore, $lt: twoMonthsAgo } }).toArray();
-  messagesToWarn.forEach(msg => {
-    io.to(msg.from).emit('messageWarning', { messageId: msg._id, warning: 'This message will be deleted in 1 week.' });
-  });
+  // Thông báo sắp xóa
+  const soonDelete = await db.collection('messages').find({ createdAt: { $lte: oneWeekAgo, $gt: twoMonthsAgo } }).toArray();
+  if (soonDelete.length > 0) console.log('Messages will be deleted in 1 week:', soonDelete.length);
 
-  // Delete messages older than 60 days
-  const result = await messagesCollection.deleteMany({ createdAt: { $lt: twoMonthsAgo } });
-  if (result.deletedCount > 0) console.log(`🗑 Deleted ${result.deletedCount} old messages`);
+  // Xóa thật sự
+  await db.collection('messages').deleteMany({ createdAt: { $lte: twoMonthsAgo } });
+}, 24 * 60 * 60 * 1000); // chạy mỗi ngày
+
+// ==== Hàm mã hóa/giải mã E2E ====
+function encrypt(text, passphrase) {
+  const cipher = crypto.createCipher('aes-256-cbc', passphrase);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return encrypted;
 }
 
-// Run cleanup every 24h
-setInterval(cleanupMessages, 24 * 60 * 60 * 1000);
+function decrypt(encrypted, passphrase) {
+  const decipher = crypto.createDecipher('aes-256-cbc', passphrase);
+  let decrypted = decipher.update(encrypted, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
 
+// ==== Chạy server ====
+const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`Server running on port ${PORT}`);
 });
