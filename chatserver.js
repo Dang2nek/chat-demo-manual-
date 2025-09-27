@@ -1,99 +1,109 @@
-const socket = io();
-let currentUser = null;
-let privateKey = null;
-let publicKey = null;
+const express = require("express");
+const http = require("http");
+const { Server } = require("socket.io");
+const bcrypt = require("bcryptjs");
+const { MongoClient } = require("mongodb");
+const cron = require("node-cron");
+require("dotenv").config();
 
-// Hiển thị login/register
-document.getElementById("showRegister").onclick = () => {
-  document.getElementById("loginBox").style.display = "none";
-  document.getElementById("registerBox").style.display = "block";
-};
-document.getElementById("showLogin").onclick = () => {
-  document.getElementById("registerBox").style.display = "none";
-  document.getElementById("loginBox").style.display = "block";
-};
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server);
 
-// Tạo keypair E2E
-async function generateKeyPair() {
-  const keyPair = await window.crypto.subtle.generateKey(
-    { name: "RSA-OAEP", modulusLength: 2048, publicExponent: new Uint8Array([1,0,1]), hash: "SHA-256" },
-    true,
-    ["encrypt", "decrypt"]
-  );
-  privateKey = keyPair.privateKey;
-  publicKey = await window.crypto.subtle.exportKey("spki", keyPair.publicKey);
-  return btoa(String.fromCharCode(...new Uint8Array(publicKey)));
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// MongoDB
+const uri = process.env.MONGODB_URI;
+if (!uri) {
+  console.error("❌ MONGODB_URI is not defined in environment variables!");
+  process.exit(1);
 }
+const client = new MongoClient(uri);
+let usersCol, messagesCol;
 
-// Đăng ký
-document.getElementById("btnRegister").onclick = async () => {
-  const username = document.getElementById("regUser").value.trim();
-  const password = document.getElementById("regPass").value.trim();
-  const pubKey = await generateKeyPair();
+// Connect Mongo
+async function connectMongo() {
+  await client.connect();
+  const db = client.db("chatapp");
+  usersCol = db.collection("users");
+  messagesCol = db.collection("messages");
+}
+connectMongo();
 
-  const res = await fetch("/register", {
-    method: "POST",
-    headers: {"Content-Type":"application/json"},
-    body: JSON.stringify({ username, password, publicKey: pubKey })
-  });
-  const data = await res.json();
-  document.getElementById("regMsg").innerText = data.success ? "Đăng ký thành công!" : data.error;
-  if(data.success) document.getElementById("showLogin").click();
-};
-
-// Đăng nhập
-document.getElementById("btnLogin").onclick = async () => {
-  const username = document.getElementById("loginUser").value.trim();
-  const password = document.getElementById("loginPass").value.trim();
-
-  const res = await fetch("/login", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({ username, password })
-  });
-  const data = await res.json();
-  document.getElementById("loginMsg").innerText = data.success ? "Đăng nhập thành công!" : data.error;
-  if(data.success){
-    currentUser = username;
-    document.getElementById("loginBox").style.display = "none";
-    document.getElementById("chatBox").style.display = "block";
-  }
-};
-
-// Gửi tin nhắn
-document.getElementById("sendBtn").onclick = async () => {
-  const msgInput = document.getElementById("msgInput");
-  let message = msgInput.value.trim();
-  if(!message) return;
-
-  // Mã hóa tin nhắn (E2E)
-  const enc = new TextEncoder();
-  const encrypted = await window.crypto.subtle.encrypt(
-    {name:"RSA-OAEP", key: await window.crypto.subtle.importKey("spki", publicKey, {name:"RSA-OAEP", hash:"SHA-256"}, true, ["encrypt"])},
-    publicKey,
-    enc.encode(message)
-  );
-  const ciphertext = btoa(String.fromCharCode(...new Uint8Array(encrypted)));
-
-  socket.emit("sendMessage", { from: currentUser, to: "all", ciphertext });
-  msgInput.value = "";
-};
-
-// Nhận tin nhắn
-socket.on("receiveMessage", msg => {
-  const msgDiv = document.getElementById("messages");
-  const div = document.createElement("div");
-  div.innerText = `${msg.from}: ${msg.ciphertext}`;
-  msgDiv.appendChild(div);
-  msgDiv.scrollTop = msgDiv.scrollHeight;
+// Serve static html
+const path = require("path");
+app.get("/", (req, res) => {
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Lịch sử tin nhắn
-socket.on("message_history", history => {
-  const msgDiv = document.getElementById("messages");
-  history.forEach(msg => {
-    const div = document.createElement("div");
-    div.innerText = `${msg.from}: ${msg.ciphertext}`;
-    msgDiv.appendChild(div);
+// Register
+app.post("/register", async (req, res) => {
+  const { username, password } = req.body;
+  if (!username || !password) return res.status(400).json({ success: false, message: "Thiếu thông tin" });
+
+  const exists = await usersCol.findOne({ username });
+  if (exists) return res.status(400).json({ success: false, message: "Tên đã tồn tại" });
+
+  const hash = await bcrypt.hash(password, 10);
+  await usersCol.insertOne({ username, password: hash });
+  res.json({ success: true, message: "Đăng ký thành công" });
+});
+
+// Login
+app.post("/login", async (req, res) => {
+  const { username, password } = req.body;
+  const user = await usersCol.findOne({ username });
+  if (!user) return res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
+
+  const match = await bcrypt.compare(password, user.password);
+  if (!match) return res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
+
+  res.json({ success: true, message: "Đăng nhập thành công" });
+});
+
+// ====== SOCKET.IO ======
+const passphrase = require("crypto").randomBytes(16).toString("hex");
+
+io.on("connection", async (socket) => {
+  console.log("🔗 User connected:", socket.id);
+  socket.emit("set_passphrase", passphrase);
+
+  // Send message history
+  const history = await messagesCol.find().sort({ time: 1 }).toArray();
+  socket.emit("message_history", history);
+
+  // Receive message
+  socket.on("chat_message", async (data) => {
+    const msgObj = { ...data, time: new Date() };
+    await messagesCol.insertOne(msgObj);
+    io.emit("message", msgObj);
+  });
+
+  socket.on("disconnect", () => {
+    console.log("❌ User disconnected:", socket.id);
   });
 });
+
+// ====== CLEANUP OLD MESSAGES ======
+// Every day at midnight
+cron.schedule("0 0 * * *", async () => {
+  const twoMonthsAgo = new Date();
+  twoMonthsAgo.setMonth(twoMonthsAgo.getMonth() - 2);
+  const oneWeekBefore = new Date();
+  oneWeekBefore.setDate(twoMonthsAgo.getDate() - 7);
+
+  const toDelete = await messagesCol.find({ time: { $lte: twoMonthsAgo } }).toArray();
+  toDelete.forEach(msg => {
+    if (msg.time <= oneWeekBefore) {
+      messagesCol.deleteOne({ _id: msg._id });
+    } else {
+      // Notify users 1 week before
+      io.emit("message", { from: "System", message: `Tin nhắn từ ${msg.from} sẽ xóa vào tuần sau.`, time: new Date() });
+    }
+  });
+});
+
+// ====== RUN SERVER ======
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
