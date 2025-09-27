@@ -94,3 +94,4 @@ setInterval(async () => {
 }, 24*60*60*1000);
 
 server.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+
