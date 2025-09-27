@@ -2,108 +2,78 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<title>Chat E2E</title>
+<title>Chat E2E + Socket ID</title>
 <style>
-  body { font-family: Arial, sans-serif; margin: 20px; }
-  #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; margin-bottom: 10px; }
-  #loginForm, #registerForm, #chatForm { margin-bottom: 20px; }
-  input, button { padding: 5px; margin: 2px; }
-  .warning { color: red; }
+  body { font-family: Arial; padding: 20px; }
+  #chat { border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: auto; }
+  #myID { font-weight: bold; color: blue; }
 </style>
 </head>
 <body>
 
-<h2>Secure Chat App</h2>
+<h2>Your Socket ID: <span id="myID">...</span></h2>
+<h2>Passphrase: <span id="myPass">...</span></h2>
 
-<div id="registerForm">
-  <h3>Register</h3>
-  <input type="text" id="regUsername" placeholder="Username">
-  <input type="password" id="regPassword" placeholder="Password">
-  <button onclick="register()">Register</button>
-  <div id="regMsg"></div>
-</div>
+<div id="chat"></div>
 
-<div id="loginForm">
-  <h3>Login</h3>
-  <input type="text" id="loginUsername" placeholder="Username">
-  <input type="password" id="loginPassword" placeholder="Password">
-  <button onclick="login()">Login</button>
-  <div id="loginMsg"></div>
-</div>
+<input id="msgInput" placeholder="Type a message" autocomplete="off"/>
+<button id="sendBtn">Send</button>
 
-<div id="chatForm" style="display:none;">
-  <h3>Chat</h3>
-  <div id="chat"></div>
-  <input type="text" id="toUser" placeholder="To (socket id)">
-  <input type="text" id="message" placeholder="Message">
-  <button onclick="sendMessage()">Send</button>
-</div>
+<h3>Login / Register</h3>
+<input id="username" placeholder="Username"/>
+<input id="password" placeholder="Password" type="password"/>
+<button id="loginBtn">Login</button>
+<button id="registerBtn">Register</button>
+<div id="loginStatus"></div>
 
 <script src="/socket.io/socket.io.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.1.1/crypto-js.min.js"></script>
 <script>
 const socket = io();
-let sessionKey = '';
-let currentUser = '';
 
-socket.on('key', key => {
-  sessionKey = key;
-  console.log('Received session key:', sessionKey);
+// Hiển thị socket ID và passphrase
+socket.on('yourID', (data) => {
+  document.getElementById('myID').innerText = data.id;
+  document.getElementById('myPass').innerText = data.passphrase;
 });
 
-function register() {
-  const username = document.getElementById('regUsername').value;
-  const password = document.getElementById('regPassword').value;
-  socket.emit('register', { username, password });
-}
-
-socket.on('registerResponse', data => {
-  document.getElementById('regMsg').innerText = data.message;
+// Nhận tin nhắn
+socket.on('chatMessage', (data) => {
+  const chat = document.getElementById('chat');
+  chat.innerHTML += `<p><strong>${data.id}:</strong> ${data.msg}</p>`;
+  chat.scrollTop = chat.scrollHeight;
 });
 
-function login() {
-  const username = document.getElementById('loginUsername').value;
-  const password = document.getElementById('loginPassword').value;
-  socket.emit('login', { username, password });
-}
-
-socket.on('loginResponse', data => {
-  if (data.success) {
-    currentUser = data.username;
-    document.getElementById('loginForm').style.display = 'none';
-    document.getElementById('registerForm').style.display = 'none';
-    document.getElementById('chatForm').style.display = 'block';
-    addMessage('System', 'Logged in as ' + currentUser);
-  } else {
-    document.getElementById('loginMsg').innerText = data.message;
+// Gửi tin nhắn
+document.getElementById('sendBtn').onclick = () => {
+  const input = document.getElementById('msgInput');
+  if(input.value.trim() !== '') {
+    socket.emit('chatMessage', { msg: input.value });
+    input.value = '';
   }
-});
+};
 
-function sendMessage() {
-  const to = document.getElementById('toUser').value;
-  const msg = document.getElementById('message').value;
-  const encrypted = CryptoJS.AES.encrypt(msg, sessionKey).toString();
-  socket.emit('sendMessage', { to, message: msg }); // server vẫn mã hóa
-  addMessage('Me -> ' + to, msg);
-  document.getElementById('message').value = '';
-}
+// ==== Login/Register ====
+document.getElementById('registerBtn').onclick = async () => {
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  const res = await fetch('/register', {
+    method:'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({username,password})
+  });
+  document.getElementById('loginStatus').innerText = await res.text();
+};
 
-socket.on('messageSent', data => {
-  if (!data.success) addMessage('System', 'Failed to send message');
-});
-
-socket.on('messageWarning', data => {
-  addMessage('System', `⚠ Warning: Message ID ${data.messageId} will be deleted in 1 week.`, true);
-});
-
-function addMessage(sender, text, isWarning=false) {
-  const chatDiv = document.getElementById('chat');
-  const msgDiv = document.createElement('div');
-  msgDiv.innerHTML = `<b>${sender}:</b> ${text}`;
-  if (isWarning) msgDiv.classList.add('warning');
-  chatDiv.appendChild(msgDiv);
-  chatDiv.scrollTop = chatDiv.scrollHeight;
-}
+document.getElementById('loginBtn').onclick = async () => {
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  const res = await fetch('/login', {
+    method:'POST',
+    headers: {'Content-Type':'application/json'},
+    body: JSON.stringify({username,password})
+  });
+  document.getElementById('loginStatus').innerText = await res.text();
+};
 </script>
 
 </body>
