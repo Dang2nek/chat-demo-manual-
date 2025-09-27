@@ -1,89 +1,59 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <title>Chat E2E</title>
 <style>
-  body { font-family: sans-serif; }
-  #chat { height: 300px; overflow-y: scroll; border: 1px solid #ccc; margin-bottom: 10px; padding:5px; }
-  #message { width: 70%; }
+#chat{height:300px;overflow:auto;border:1px solid #ccc;padding:5px;}
 </style>
+<script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/crypto-js@4.1.1/crypto-js.min.js"></script>
 </head>
 <body>
-<h2>Chat Room</h2>
-<label>Username:</label><input id="username"><br>
-<label>Password:</label><input type="password" id="password"><br>
-<button id="register">Register</button>
-<button id="login">Login</button>
-<p id="info"></p>
-
+<h3>Chat E2E</h3>
+<div>
+    Socket ID: <span id="socketId"></span>
+</div>
 <div id="chat"></div>
-<input id="message"><button id="send">Send</button>
-<p>Socket ID: <span id="socketid"></span></p>
+<input type="text" id="msgInput" placeholder="Message">
+<input type="text" id="passphraseInput" placeholder="Passphrase">
+<button id="sendBtn">Send</button>
 
-<script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
 <script>
 const socket = io();
-let username = "";
-let passphrase = "";
 
-// Register
-document.getElementById("register").onclick = async () => {
-  const u = document.getElementById("username").value;
-  const p = document.getElementById("password").value;
-  const res = await fetch("/register", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({username:u,password:p})
-  });
-  document.getElementById("info").innerText = await res.text();
-};
+socket.on('socketId', id=>{
+    document.getElementById('socketId').textContent = id;
+});
 
-// Login
-document.getElementById("login").onclick = async () => {
-  const u = document.getElementById("username").value;
-  const p = document.getElementById("password").value;
-  const res = await fetch("/login", {
-    method:"POST",
-    headers:{"Content-Type":"application/json"},
-    body: JSON.stringify({username:u,password:p})
-  });
-  const data = await res.json();
-  username = data.username;
-  passphrase = data.passphrase;
-  document.getElementById("info").innerText = "Logged in as "+username;
-  socket.emit("join",{username,passphrase});
-  document.getElementById("socketid").innerText = socket.id;
-};
+// Receive messages
+socket.on('chatMessage', ({from,msg})=>{
+    const el = document.createElement('div');
+    el.textContent = from + ": " + msg;
+    document.getElementById('chat').appendChild(el);
+});
+
+// Delete notice
+socket.on('deleteNotice', ({from,msg})=>{
+    const el = document.createElement('div');
+    el.textContent = "[Message from "+from+" deleted]";
+    document.getElementById('chat').appendChild(el);
+});
 
 // Send message
-document.getElementById("send").onclick = () => {
-  const msg = document.getElementById("message").value;
-  socket.emit("chat message", msg);
-  document.getElementById("message").value = "";
+document.getElementById('sendBtn').addEventListener('click', ()=>{
+    const msg = document.getElementById('msgInput').value;
+    const passphrase = document.getElementById('passphraseInput').value;
+    if(!msg || !passphrase) return alert("Enter msg + passphrase");
+    socket.emit('chatMessage',{from:"Me", msg, passphrase});
+    document.getElementById('msgInput').value = '';
+});
+
+// Load previous messages
+window.onload = ()=>{
+    const passphrase = prompt("Enter your passphrase to decrypt old messages:");
+    socket.emit('loadMessages',{passphrase});
 };
-
-// Receive chat
-socket.on("chat message", (msg) => {
-  const chat = document.getElementById("chat");
-  chat.innerHTML += "<b>"+msg.username+":</b> "+msg.text+"<br>";
-  chat.scrollTop = chat.scrollHeight;
-});
-
-// Receive history
-socket.on("chat history", (msgs)=>{
-  const chat = document.getElementById("chat");
-  chat.innerHTML = "";
-  msgs.forEach(m=>{
-    chat.innerHTML += "<b>"+m.username+":</b> "+m.text+"<br>";
-  });
-  chat.scrollTop = chat.scrollHeight;
-});
-
-// Block PrintScreen
-document.addEventListener("keydown", e=>{
-  if(e.key==="PrintScreen"){alert("Screenshot blocked"); e.preventDefault();}
-});
 </script>
 </body>
 </html>
