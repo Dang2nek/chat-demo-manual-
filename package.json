@@ -1,18 +1,16 @@
 {
   "name": "chat-e2e-app",
   "version": "1.0.0",
-  "description": "Chat app với E2E encryption và MongoDB",
+  "description": "Chat app with E2E encryption",
   "main": "chatserver.js",
   "scripts": {
     "start": "node chatserver.js"
   },
   "dependencies": {
     "bcryptjs": "^2.4.3",
-    "cors": "^2.8.5",
     "dotenv": "^16.3.1",
     "express": "^4.18.2",
-    "mongodb": "^6.12.0",
-    "socket.io": "^4.7.2",
-    "crypto-js": "^4.1.1"
+    "mongodb": "^6.11.0",
+    "socket.io": "^4.7.2"
   }
 }
