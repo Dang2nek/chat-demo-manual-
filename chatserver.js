@@ -1,10 +1,13 @@
-// ================== CHAT SERVER ==================
-const express = require("express");
-const http = require("http");
-const { Server } = require("socket.io");
-const { MongoClient, ServerApiVersion } = require("mongodb");
-const bcrypt = require("bcryptjs");
-const crypto = require("crypto");
+// chatserver.js
+require('dotenv').config(); // Đọc MONGODB_URI từ .env
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const bcrypt = require('bcryptjs');
+const { MongoClient, ServerApiVersion, ObjectId } = require('mongodb');
+const CryptoJS = require('crypto-js');
+const cors = require('cors');
+const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
@@ -12,106 +15,100 @@ const io = new Server(server);
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(cors());
 
-// ================== MONGODB ==================
-const uri = process.env.MONGODB_URI || "mongodb+srv://chat_for_class:chatforclass@cluster0.cfyfeh9.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0";
-const client = new MongoClient(uri, {
-  serverApi: ServerApiVersion.v1,
-  strict: true,
-  deprecationErrors: true,
+// ================== MongoDB ==================
+if (!process.env.MONGODB_URI) {
+  console.error("❌ MONGODB_URI is not defined in environment variables!");
+  process.exit(1);
+}
+
+const client = new MongoClient(process.env.MONGODB_URI, {
+  serverApi: ServerApiVersion.v1
 });
+let db;
 
-let db, usersCol, messagesCol;
-
-async function initDB() {
+async function connectDB() {
   await client.connect();
-  db = client.db("chatapp");
-  usersCol = db.collection("users");
-  messagesCol = db.collection("messages");
-
+  db = client.db('chatapp'); // tên database
   console.log("✅ Connected to MongoDB!");
 }
-initDB().catch(console.error);
+connectDB().catch(console.error);
 
-// ================== HELPER ==================
-function generatePassphrase() {
-  return crypto.randomBytes(16).toString("hex");
-}
-
-function encryptMessage(message, passphrase) {
-  const iv = crypto.randomBytes(12);
-  const key = crypto.createHash("sha256").update(passphrase).digest();
-  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
-  let encrypted = cipher.update(message, "utf8", "hex");
-  encrypted += cipher.final("hex");
-  const tag = cipher.getAuthTag().toString("hex");
-  return `${iv.toString("hex")}:${tag}:${encrypted}`;
-}
-
-function decryptMessage(encrypted, passphrase) {
-  const [ivHex, tagHex, data] = encrypted.split(":");
-  const key = crypto.createHash("sha256").update(passphrase).digest();
-  const decipher = crypto.createDecipheriv("aes-256-gcm", key, Buffer.from(ivHex, "hex"));
-  decipher.setAuthTag(Buffer.from(tagHex, "hex"));
-  let decrypted = decipher.update(data, "hex", "utf8");
-  decrypted += decipher.final("utf8");
-  return decrypted;
-}
-
-// ================== ROUTES ==================
+// ================== Serve index.html ==================
 app.get("/", (req, res) => {
-  res.sendFile(__dirname + "/index.html");
+  res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// Register
+// ================== REGISTER ==================
 app.post("/register", async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) return res.status(400).json({ success: false, message: "Thiếu thông tin" });
+  try {
+    const { username, password } = req.body;
+    if (!username || !password)
+      return res.status(400).json({ success: false, message: "Thiếu thông tin" });
 
-  const existing = await usersCol.findOne({ username });
-  if (existing) return res.status(400).json({ success: false, message: "Tên đã tồn tại" });
+    const users = db.collection('users');
+    const exists = await users.findOne({ username });
+    if (exists) return res.status(400).json({ success: false, message: "Tên đã tồn tại" });
 
-  const hashed = await bcrypt.hash(password, 10);
-  await usersCol.insertOne({ username, password: hashed });
-  res.json({ success: true, message: "Đăng ký thành công" });
+    const hash = await bcrypt.hash(password, 10);
+    await users.insertOne({ username, password: hash });
+    res.json({ success: true, message: "Đăng ký thành công" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Lỗi server" });
+  }
 });
 
-// Login
+// ================== LOGIN ==================
 app.post("/login", async (req, res) => {
-  const { username, password } = req.body;
-  const user = await usersCol.findOne({ username });
-  if (!user) return res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
+  try {
+    const { username, password } = req.body;
+    const users = db.collection('users');
+    const user = await users.findOne({ username });
+    if (!user) return res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
 
-  const match = await bcrypt.compare(password, user.password);
-  if (!match) return res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
+    const match = await bcrypt.compare(password, user.password);
+    if (!match) return res.status(401).json({ success: false, message: "Sai tài khoản hoặc mật khẩu" });
 
-  res.json({ success: true, message: "Đăng nhập thành công" });
+    res.json({ success: true, message: "Đăng nhập thành công" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ success: false, message: "Lỗi server" });
+  }
 });
 
 // ================== SOCKET.IO ==================
 io.on("connection", async (socket) => {
   console.log("🔗 User connected:", socket.id);
 
-  // Mỗi socket được cấp passphrase riêng
-  const passphrase = generatePassphrase();
-  socket.passphrase = passphrase;
+  const messagesCol = db.collection('messages');
 
-  // Lấy lịch sử tin nhắn
-  const history = await messagesCol.find({}).sort({ time: 1 }).toArray();
-  const decryptedHistory = history.map(msg => ({
-    from: msg.from,
-    message: decryptMessage(msg.message, msg.passphrase),
-    time: msg.time
-  }));
-  socket.emit("message_history", decryptedHistory);
+  // gửi lịch sử tin nhắn
+  const history = await messagesCol.find({}).sort({ createdAt: 1 }).toArray();
+  socket.emit("message_history", history);
 
+  // Nhận tin nhắn
   socket.on("chat_message", async (data) => {
-    const encrypted = encryptMessage(data.message, socket.passphrase);
-    const msgObj = { from: data.from, message: encrypted, passphrase: socket.passphrase, time: new Date() };
+    try {
+      const { from, message } = data;
+      // Mã hóa E2E
+      const key = CryptoJS.enc.Utf8.parse(socket.id); // key ngẫu nhiên theo socket
+      const encrypted = CryptoJS.AES.encrypt(message, key).toString();
 
-    await messagesCol.insertOne(msgObj);
+      const msgObj = {
+        from,
+        message: encrypted,
+        createdAt: new Date()
+      };
 
-    io.emit("message", { from: data.from, message: data.message });
+      await messagesCol.insertOne(msgObj);
+
+      // gửi đến tất cả
+      io.emit("message", { from, message: encrypted });
+    } catch (err) {
+      console.error(err);
+    }
   });
 
   socket.on("disconnect", () => {
@@ -119,20 +116,33 @@ io.on("connection", async (socket) => {
   });
 });
 
-// ================== AUTO DELETE OLD MESSAGES ==================
-setInterval(async () => {
+// ================== AUTO XÓA TIN NHẮN ==================
+async function cleanupOldMessages() {
+  const messagesCol = db.collection('messages');
   const now = new Date();
-  const warningDate = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000); // 1 tuần sau
-  const deleteDate = new Date(now.getTime() - 60 * 24 * 60 * 60 * 1000); // 2 tháng trước
+  const twoMonthsAgo = new Date(now.getTime() - 60*24*60*60*1000); // 2 tháng
+  const oneWeekBefore = new Date(now.getTime() - 53*24*60*60*1000); // 1 tuần trước
 
-  const oldMessages = await messagesCol.find({ time: { $lt: deleteDate } }).toArray();
-  oldMessages.forEach(msg => {
-    io.emit("system_message", `Tin nhắn của ${msg.from} sẽ bị xóa sớm!`);
+  // thông báo cho tin nhắn sắp xóa
+  const soonDelete = await messagesCol.find({ createdAt: { $gte: oneWeekBefore, $lt: twoMonthsAgo } }).toArray();
+  soonDelete.forEach(msg => {
+    io.emit("message_warning", { id: msg._id, from: msg.from, message: msg.message });
   });
 
-  await messagesCol.deleteMany({ time: { $lt: deleteDate } });
-}, 24 * 60 * 60 * 1000); // chạy mỗi ngày
+  // xóa tin nhắn 2 tháng
+  const result = await messagesCol.deleteMany({ createdAt: { $lt: twoMonthsAgo } });
+  if (result.deletedCount > 0) {
+    console.log(`🗑 Xóa ${result.deletedCount} tin nhắn cũ hơn 2 tháng`);
+  }
+}
 
-// ================== START SERVER ==================
+// chạy cleanup mỗi ngày
+setInterval(() => {
+  cleanupOldMessages().catch(console.error);
+}, 24*60*60*1000);
+
+// ================== SERVER ==================
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, () => console.log(`✅ Server running on port ${PORT}`));
+server.listen(PORT, () => {
+  console.log(`✅ Server running on port ${PORT}`);
+});
